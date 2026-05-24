@@ -1,6 +1,6 @@
 # ServerKit
 
-Object-oriented Python SDK for Linux operations — processes, logs, and reusable workflows with a fluent, chainable API.
+Object-oriented Python SDK for Linux operations — processes, logs, workflows, and system resources with a fluent, chainable API.
 
 Think **structured objects** instead of parsing `ps aux`, `grep`, and one-off shell pipelines.
 
@@ -8,26 +8,33 @@ Think **structured objects** instead of parsing `ps aux`, `grep`, and one-off sh
 
 | Layer | Owner | Path |
 |-------|--------|------|
-| **SDK (core)** | Dev 1 | `serverkit/core`, `processes`, `logs`, `workflows` |
+| **SDK (core)** | Dev 1 | `serverkit/*` resource modules |
 | **Interactive shell** | Dev 2 | `serverkit/shell` |
 | **AI (Ollama)** | Dev 2 | `serverkit/ai` |
 
-Dev 2 consumes the SDK only (`server.processes()`, `server.logs()`, `server.workflow()`). The core layer must stay a clean, self-documenting API.
+Dev 2 consumes the SDK via `Server` — see [`docs/DEV2_CONTRACTS.md`](docs/DEV2_CONTRACTS.md).
 
-## Project layout
+## Server API
 
-```
-serverkit/
-├── core/server.py          # Server entry point
-├── processes/              # Process, ProcessCollection, ProcessManager
-├── logs/                   # LogFile, LogManager
-├── workflows/              # Workflow, steps, builder, manager
-├── shell/                  # Dev 2 — REPL, parser, autocomplete
-└── ai/                     # Dev 2 — Ollama client, analyzer
+```python
+from serverkit import Server
 
-tests/                      # Milestone tests
-examples/                   # Usage examples
-docs/                       # Project PDFs (main + dev guides)
+server = Server()
+
+server.processes().memory_above(500).sort_by_memory().all()
+server.logs("app.log").errors().match(r"timeout").all()
+server.memory().summarize()
+server.disk().usage_above(80).summarize()
+server.network().interfaces().sort_by_traffic().summarize()
+server.ports().listening().summarize()
+server.systemctl().list_units().active().summarize()
+server.cron().suspicious_only().all()
+server.users().logged_in().summarize()
+server.env().keys_matching("PATH").all()
+server.docker().containers().running().summarize()  # needs [docker] extra
+
+server.workflow("audit").processes().memory_above(1000).summarize().save()
+server.run("audit", dry_run=True)
 ```
 
 ## Setup
@@ -36,61 +43,41 @@ Requires **Python 3.10+**.
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+source .venv/bin/activate
+pip install -e ".[dev]"           # core + pytest
+pip install -e ".[rich]"          # table output
+pip install -e ".[docker]"        # container support
+pip install -e ".[all]"           # everything
+pytest
 ```
 
-## Usage (target API)
+Config: `~/.serverkit/config.json` (executor, rich output, Ollama model defaults).
 
-```python
-from serverkit import Server
+## OOP patterns used
 
-server = Server()
-
-# Processes
-server.processes().memory_above(500).sort_by_memory().all()
-
-# Logs
-server.logs("app.log").errors().tail(50).all()
-
-# Workflows (saved under ~/.serverkit/workflows/)
-(
-    server.workflow("memory_audit")
-    .processes()
-    .memory_above(1000)
-    .sort_by_memory()
-    .summarize()
-    .save()
-)
-server.run("memory_audit")
-```
-
-## Dev 1 build order
-
-1. `Process` + `ProcessCollection`
-2. `ProcessFactory` + `ProcessManager`
-3. `Server` (processes)
-4. `LogFile` + `LogManager`
-5. `WorkflowStep` subclasses
-6. `Workflow` serialization
-7. `WorkflowBuilder`
-8. `WorkflowManager.run()`
-
-See `docs/serverkit_dev1_sdk_core.pdf` for interfaces and reference implementations.
+| Pattern | Where |
+|---------|--------|
+| Facade | `Server` |
+| Factory | `ProcessFactory`, `StepFactory` |
+| Fluent collection | `ProcessCollection`, `LogFile`, `DiskCollection`, … |
+| Composite | `Workflow` + `WorkflowStep` |
+| Strategy | `SequentialExecutor` / `ParallelExecutor` |
+| Builder | `WorkflowBuilder` |
 
 ## Design rules
 
-- **Eager execution** — chain methods filter immediately and return `self`; only `.all()` / `.summarize()` are terminal.
-- **Workflow JSON** — canonical schema in the main doc; stored at `~/.serverkit/workflows/{name}.json`.
-- **Shared contracts** — do not change public method signatures without coordinating with Dev 2.
+- **Eager execution** — filters run immediately; `.all()` / `.summarize()` are terminal.
+- **Workflow JSON** — `schema_version: 2` under `~/.serverkit/workflows/`.
+- **Optional deps** — `rich`, `docker` fail with `OptionalDependencyError` if missing.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| `docs/serverkit_main.pdf` | Full architecture and contracts |
-| `docs/serverkit_dev1_sdk_core.pdf` | SDK + workflow engine (Dev 1) |
-| `docs/serverkit_dev2_shell_ai.pdf` | Shell + AI layer (Dev 2) |
+| `docs/serverkit_main.pdf` | Full architecture |
+| `docs/serverkit_dev1_sdk_core.pdf` | Dev 1 SDK spec |
+| `docs/serverkit_dev2_shell_ai.pdf` | Dev 2 shell + AI |
+| `docs/DEV2_CONTRACTS.md` | Stable integration API |
 
 ## License
 
