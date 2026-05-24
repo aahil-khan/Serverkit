@@ -41,6 +41,11 @@ htmlcov/
 # ServerKit runtime
 .serverkit/
 
+# Local sample logs
+app.log
+*.log
+!tests/fixtures/**/*.log
+
 # OS
 .DS_Store
 Thumbs.db
