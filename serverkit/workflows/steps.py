@@ -28,6 +28,8 @@ def _processes(context: dict) -> ProcessCollection:
 
 
 class ProcessFilterStep(WorkflowStep):
+    parallel_safe = True
+
     def __init__(
         self,
         memory_above: float | None = None,
@@ -67,6 +69,8 @@ class ProcessFilterStep(WorkflowStep):
 
 
 class SortStep(WorkflowStep):
+    parallel_safe = True
+
     def __init__(self, field: str = "memory") -> None:
         self.field = field
 
@@ -92,6 +96,8 @@ class SortStep(WorkflowStep):
 
 
 class LogFilterStep(WorkflowStep):
+    parallel_safe = True
+
     def __init__(
         self,
         path: str | None = None,
@@ -136,6 +142,8 @@ class LogFilterStep(WorkflowStep):
 
 
 class TailStep(WorkflowStep):
+    parallel_safe = True
+
     def __init__(self, n: int) -> None:
         self.n = n
 
@@ -160,6 +168,8 @@ class TailStep(WorkflowStep):
 
 
 class SummaryStep(WorkflowStep):
+    parallel_safe = True
+
     def execute(self, context: dict) -> dict:
         if "log_file" in context:
             context["summary"] = context["log_file"].summarize()
@@ -233,7 +243,8 @@ class ConditionalStep(WorkflowStep):
         self.key = key
 
     def execute(self, context: dict) -> dict:
-        if self.when == "context_empty" and not context.get(self.key):
+        value = context.get(self.key)
+        if self.when == "context_empty" and not value:
             context["_skip_next"] = True
         elif self.when == "key_missing" and self.key not in context:
             context["_skip_next"] = True

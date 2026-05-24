@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from serverkit.workflows.steps import (
+    ChainStep,
+    ConditionalStep,
     ExportStep,
     LogFilterStep,
     ProcessFilterStep,
@@ -79,6 +81,21 @@ class WorkflowBuilder:
 
     def export(self, path: str) -> WorkflowBuilder:
         self._workflow.add_step(ExportStep(path=path))
+        return self
+
+    def when_empty(self, key: str) -> WorkflowBuilder:
+        """Skip the next step if context[key] is missing or empty."""
+        self._workflow.add_step(ConditionalStep(when="context_empty", key=key))
+        return self
+
+    def when_missing(self, key: str) -> WorkflowBuilder:
+        """Skip the next step if context[key] is not set."""
+        self._workflow.add_step(ConditionalStep(when="key_missing", key=key))
+        return self
+
+    def then_run(self, workflow_name: str) -> WorkflowBuilder:
+        """Chain another saved workflow after this one."""
+        self._workflow.add_step(ChainStep(workflow=workflow_name))
         return self
 
     def save(self) -> Workflow:

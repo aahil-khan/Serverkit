@@ -9,6 +9,9 @@ class SequentialExecutor(WorkflowExecutor):
 
         context: dict = {"_server": server, "dry_run": dry_run}
         for step in workflow.steps:
+            if context.pop("_skip_next", False):
+                print(f" Skipping: {step.__class__.__name__} (conditional)")
+                continue
             print(f" Running: {step.__class__.__name__}")
             if dry_run:
                 print(f"   [dry-run] would run {step.to_dict()}")
