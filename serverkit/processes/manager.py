@@ -5,7 +5,10 @@ from __future__ import annotations
 import psutil
 
 from serverkit.core.collection import FluentCollection
-from serverkit.core.display import display_table, export_table
+from serverkit.config import Config
+from serverkit.core.display import display_table, export_table, resolve_use_rich
+from serverkit.output.progress import track_iterable
+from serverkit.processes.aliases import app_name
 from serverkit.processes.factory import ProcessFactory
 from serverkit.processes.process import Process
 
@@ -43,7 +46,10 @@ class ProcessCollection(FluentCollection[Process]):
         lines = [f"{p.name}: {p.memory_mb:.1f} MB" for p in self.data[:10]]
         return "\n".join(lines)
 
-    def display(self, *, use_rich: bool = True, limit: int = 25) -> str:
+    def summarise(self) -> str:
+        return self.summarize()
+
+    def display(self, *, use_rich: bool | None = None, limit: int = 25) -> str:
         rows = [
             [p.name, f"{p.memory_mb:.1f}", f"{p.cpu_percent:.1f}", p.pid, p.username or ""]
             for p in self.data[:limit]
@@ -52,7 +58,7 @@ class ProcessCollection(FluentCollection[Process]):
             "Processes",
             ["Name", "Memory MB", "CPU %", "PID", "User"],
             rows,
-            use_rich=use_rich,
+            use_rich=resolve_use_rich(use_rich),
         )
 
     def export(self, path: str, fmt: str = "csv") -> None:
@@ -66,11 +72,12 @@ class ProcessCollection(FluentCollection[Process]):
             fmt=fmt,
         )
 
-    def group_by_name(self) -> dict[str, ProcessCollection]:
-        """Group PIDs by process name (task-manager style, sums RSS per name)."""
+    def group_by_name(self, *, use_aliases: bool = True) -> dict[str, ProcessCollection]:
+        """Group PIDs by app name; use_aliases rolls Firefox children into firefox."""
         groups: dict[str, list[Process]] = {}
         for proc in self.data:
-            groups.setdefault(proc.name, []).append(proc)
+            key = app_name(proc.name) if use_aliases else proc.name
+            groups.setdefault(key, []).append(proc)
         return {name: ProcessCollection(procs) for name, procs in groups.items()}
 
     def summarize_by_name(self, limit: int = 10) -> str:
@@ -82,22 +89,29 @@ class ProcessCollection(FluentCollection[Process]):
         ]
         return "\n".join(lines)
 
-    def display_by_name(self, *, use_rich: bool = True, limit: int = 15) -> str:
+    def display_by_name(
+        self, *, use_rich: bool | None = None, limit: int = 15, use_aliases: bool = True
+    ) -> str:
         """Table of apps with aggregated memory (closer to Mission Center view)."""
         rows = [
             [name, f"{memory_mb:.1f}", count, f"{memory_mb / 1024:.2f}"]
-            for name, memory_mb, count in self._app_totals()[:limit]
+            for name, memory_mb, count in self._app_totals(use_aliases=use_aliases)[:limit]
         ]
+        title = (
+            "Apps (with Firefox child aliases)"
+            if use_aliases
+            else "Apps (by process name)"
+        )
         return display_table(
-            "Apps (memory summed by process name)",
+            title,
             ["App", "Memory MB", "PIDs", "GiB"],
             rows,
-            use_rich=use_rich,
+            use_rich=resolve_use_rich(use_rich),
         )
 
-    def _app_totals(self) -> list[tuple[str, float, int]]:
+    def _app_totals(self, *, use_aliases: bool = True) -> list[tuple[str, float, int]]:
         totals: list[tuple[str, float, int]] = []
-        for name, collection in self.group_by_name().items():
+        for name, collection in self.group_by_name(use_aliases=use_aliases).items():
             memory_mb = sum(p.memory_mb for p in collection.data)
             totals.append((name, memory_mb, len(collection.data)))
         totals.sort(key=lambda item: item[1], reverse=True)
@@ -143,10 +157,17 @@ class ProcessCollection(FluentCollection[Process]):
 
 
 class ProcessManager:
+    def __init__(self, config: Config | None = None) -> None:
+        self._config = config
+
     def all(self) -> ProcessCollection:
+        cfg = self._config or Config.load()
+        show_progress = bool(cfg.get("output", "show_progress", default=False))
         # psutil returns 0.0 on the first cpu_percent() call per process; prime first.
         raw: list[psutil.Process] = []
-        for proc in psutil.process_iter():
+        for proc in track_iterable(
+            psutil.process_iter(), "Scanning processes", enabled=show_progress
+        ):
             try:
                 raw.append(proc)
             except psutil.NoSuchProcess:

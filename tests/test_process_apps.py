@@ -2,6 +2,10 @@ from serverkit.processes.manager import ProcessCollection
 from serverkit.processes.process import Process
 
 
+def test_summarise_alias():
+    assert ProcessCollection([Process(1, "a", 10, 1)]).summarise() == "a: 10.0 MB"
+
+
 def test_group_by_name_sums_memory():
     procs = ProcessCollection(
         [
