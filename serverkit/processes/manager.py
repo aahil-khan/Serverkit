@@ -66,6 +66,43 @@ class ProcessCollection(FluentCollection[Process]):
             fmt=fmt,
         )
 
+    def group_by_name(self) -> dict[str, ProcessCollection]:
+        """Group PIDs by process name (task-manager style, sums RSS per name)."""
+        groups: dict[str, list[Process]] = {}
+        for proc in self.data:
+            groups.setdefault(proc.name, []).append(proc)
+        return {name: ProcessCollection(procs) for name, procs in groups.items()}
+
+    def summarize_by_name(self, limit: int = 10) -> str:
+        """Top apps by total memory (sum of all PIDs sharing a name)."""
+        rows = self._app_totals()
+        lines = [
+            f"{name}: {memory_mb:.1f} MB ({count} PIDs)"
+            for name, memory_mb, count in rows[:limit]
+        ]
+        return "\n".join(lines)
+
+    def display_by_name(self, *, use_rich: bool = True, limit: int = 15) -> str:
+        """Table of apps with aggregated memory (closer to Mission Center view)."""
+        rows = [
+            [name, f"{memory_mb:.1f}", count, f"{memory_mb / 1024:.2f}"]
+            for name, memory_mb, count in self._app_totals()[:limit]
+        ]
+        return display_table(
+            "Apps (memory summed by process name)",
+            ["App", "Memory MB", "PIDs", "GiB"],
+            rows,
+            use_rich=use_rich,
+        )
+
+    def _app_totals(self) -> list[tuple[str, float, int]]:
+        totals: list[tuple[str, float, int]] = []
+        for name, collection in self.group_by_name().items():
+            memory_mb = sum(p.memory_mb for p in collection.data)
+            totals.append((name, memory_mb, len(collection.data)))
+        totals.sort(key=lambda item: item[1], reverse=True)
+        return totals
+
     def group_by_user(self) -> dict[str, ProcessCollection]:
         groups: dict[str, list[Process]] = {}
         for proc in self.data:
