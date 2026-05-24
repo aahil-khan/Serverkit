@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 
+from serverkit.exceptions import WorkflowNotFound
 from serverkit.workflows import workflow as workflow_module
 from serverkit.workflows.builder import WorkflowBuilder
 from serverkit.workflows.workflow import Workflow
@@ -14,13 +15,25 @@ class WorkflowManager:
     def create(self, name: str) -> WorkflowBuilder:
         return WorkflowBuilder(name)
 
-    def run(self, name: str) -> dict:
+    def run(
+        self,
+        name: str,
+        *,
+        dry_run: bool = False,
+        executor: str | None = None,
+        server=None,
+    ) -> dict:
         path = os.path.join(workflow_module.WORKFLOW_DIR, f"{name}.json")
+        if not os.path.exists(path):
+            raise WorkflowNotFound(f"No workflow named {name!r}")
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         workflow = Workflow.from_dict(data)
         print(f"Running workflow: {workflow.name}")
-        return workflow.run()
+        from serverkit import Server
+
+        srv = server or Server()
+        return workflow.run(srv, dry_run=dry_run, executor=executor)
 
     def list(self) -> list[str]:
         workflow_dir = workflow_module.WORKFLOW_DIR
@@ -31,6 +44,12 @@ class WorkflowManager:
             for f in os.listdir(workflow_dir)
             if f.endswith(".json")
         )
+
+    def list_versions(self, name: str) -> list[str]:
+        versions_dir = os.path.join(workflow_module.WORKFLOW_DIR, name, "versions")
+        if not os.path.exists(versions_dir):
+            return []
+        return sorted(os.listdir(versions_dir))
 
     def import_workflow(self, path: str) -> Workflow:
         with open(path, encoding="utf-8") as f:

@@ -182,6 +182,9 @@ class ExportStep(WorkflowStep):
         self.path = path
 
     def execute(self, context: dict) -> dict:
+        if context.get("dry_run"):
+            context["export_path"] = self.path
+            return context
         payload: Any = context.get("summary")
         if payload is None and "log_lines" in context:
             payload = context["log_lines"]
@@ -204,6 +207,46 @@ class ExportStep(WorkflowStep):
         return cls(path=data["path"])
 
 
+class ChainStep(WorkflowStep):
+    def __init__(self, workflow: str) -> None:
+        self.workflow = workflow
+
+    def execute(self, context: dict) -> dict:
+        if context.get("dry_run"):
+            return context
+        server = _server(context)
+        nested = server._workflow_manager.run(self.workflow, server=server)
+        context.update(nested)
+        return context
+
+    def to_dict(self) -> dict:
+        return {"type": "chain", "workflow": self.workflow}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ChainStep:
+        return cls(workflow=data["workflow"])
+
+
+class ConditionalStep(WorkflowStep):
+    def __init__(self, when: str, key: str) -> None:
+        self.when = when
+        self.key = key
+
+    def execute(self, context: dict) -> dict:
+        if self.when == "context_empty" and not context.get(self.key):
+            context["_skip_next"] = True
+        elif self.when == "key_missing" and self.key not in context:
+            context["_skip_next"] = True
+        return context
+
+    def to_dict(self) -> dict:
+        return {"type": "conditional", "when": self.when, "key": self.key}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ConditionalStep:
+        return cls(when=data["when"], key=data["key"])
+
+
 def _register_steps() -> None:
     from serverkit.workflows.factory import StepFactory
 
@@ -213,6 +256,8 @@ def _register_steps() -> None:
     StepFactory.register("tail", TailStep)
     StepFactory.register("summary", SummaryStep)
     StepFactory.register("export", ExportStep)
+    StepFactory.register("chain", ChainStep)
+    StepFactory.register("conditional", ConditionalStep)
 
 
 _register_steps()

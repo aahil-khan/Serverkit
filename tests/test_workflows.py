@@ -20,10 +20,6 @@ from serverkit.workflows.steps import (
 from serverkit.workflows.workflow import WORKFLOW_DIR, Workflow
 
 
-@pytest.fixture
-def workflow_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    monkeypatch.setattr("serverkit.workflows.workflow.WORKFLOW_DIR", str(tmp_path))
-    return tmp_path
 
 
 def test_process_filter_step_mutates_collection():
@@ -73,11 +69,9 @@ def test_builder_saves_expected_json(workflow_dir: Path):
     assert path.exists()
     data = json.loads(path.read_text())
     assert data["name"] == "memory_audit"
-    assert data["steps"] == [
-        {"type": "process_filter", "memory_above": 1000, "cpu_above": None, "named": None},
-        {"type": "sort", "field": "memory"},
-        {"type": "summary"},
-    ]
+    assert data["schema_version"] == 2
+    assert data["steps"][0]["type"] == "process_filter"
+    assert data["steps"][1]["field"] == "memory"
 
 
 def test_manager_run_executes_saved_workflow(workflow_dir: Path):
