@@ -3,6 +3,7 @@ from __future__ import annotations
 import psutil
 
 from serverkit.core.collection import FluentCollection
+from serverkit.core.display import display_table, export_table
 from serverkit.ports.port import Port
 
 
@@ -32,6 +33,29 @@ class PortCollection(FluentCollection[Port]):
         return "\n".join(
             f":{p.port} {p.status} pid={p.pid} ({p.process_name})"
             for p in self.data[:15]
+        )
+
+    def display(self, *, use_rich: bool = True, limit: int = 30) -> str:
+        rows = [
+            [p.port, p.status, p.pid or "", p.process_name or "", p.local_addr]
+            for p in self.data[:limit]
+        ]
+        return display_table(
+            "Open ports",
+            ["Port", "Status", "PID", "Process", "Local"],
+            rows,
+            use_rich=use_rich,
+        )
+
+    def export(self, path: str, fmt: str = "csv") -> None:
+        export_table(
+            path,
+            ["port", "status", "pid", "process_name", "local_addr"],
+            [
+                [p.port, p.status, p.pid, p.process_name, p.local_addr]
+                for p in self.data
+            ],
+            fmt=fmt,
         )
 
 

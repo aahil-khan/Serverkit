@@ -22,6 +22,7 @@ from serverkit import Server
 server = Server()
 
 server.processes().memory_above(500).sort_by_memory().all()
+print(server.processes().display_by_name())  # task-manager style (RSS per app name)
 server.logs("app.log").errors().match(r"timeout").all()
 server.memory().summarize()
 server.disk().usage_above(80).summarize()

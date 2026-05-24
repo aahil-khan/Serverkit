@@ -2,11 +2,14 @@
 
 import os
 
+import pytest
+
 from serverkit import Server
 from serverkit.processes.manager import ProcessManager
 from serverkit.processes.process import Process
 
 
+@pytest.mark.integration
 def test_manager_returns_nonempty_collection():
     collection = ProcessManager().all()
     processes = collection.all()
@@ -17,6 +20,7 @@ def test_manager_returns_nonempty_collection():
     assert all(p.memory_mb >= 0 for p in processes)
 
 
+@pytest.mark.integration
 def test_server_processes_delegates_to_manager():
     """Milestone 3 preview: Server is a thin facade over ProcessManager."""
     processes = Server().processes().all()

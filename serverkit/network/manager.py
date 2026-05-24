@@ -3,6 +3,7 @@ from __future__ import annotations
 import psutil
 
 from serverkit.core.collection import FluentCollection
+from serverkit.core.display import display_table, export_table
 from serverkit.network.connection import Connection, NetworkInterface
 
 
@@ -29,6 +30,18 @@ class InterfaceCollection(FluentCollection[NetworkInterface]):
             for i in self.data[:10]
         )
 
+    def display(self, *, use_rich: bool = True) -> str:
+        rows = [
+            [i.name, f"{i.bytes_sent_mb:.1f}", f"{i.bytes_recv_mb:.1f}"]
+            for i in self.data
+        ]
+        return display_table(
+            "Network interfaces",
+            ["Interface", "Sent MB", "Recv MB"],
+            rows,
+            use_rich=use_rich,
+        )
+
 
 class ConnectionCollection(FluentCollection[Connection]):
     def listening(self) -> ConnectionCollection:
@@ -50,6 +63,26 @@ class ConnectionCollection(FluentCollection[Connection]):
         return "\n".join(
             f"{c.local_addr} -> {c.remote_addr} ({c.status}) pid={c.pid}"
             for c in self.data[:10]
+        )
+
+    def display(self, *, use_rich: bool = True, limit: int = 25) -> str:
+        rows = [
+            [c.local_addr, c.remote_addr, c.status, c.pid or ""]
+            for c in self.data[:limit]
+        ]
+        return display_table(
+            "Connections",
+            ["Local", "Remote", "Status", "PID"],
+            rows,
+            use_rich=use_rich,
+        )
+
+    def export(self, path: str, fmt: str = "csv") -> None:
+        export_table(
+            path,
+            ["local_addr", "remote_addr", "status", "pid"],
+            [[c.local_addr, c.remote_addr, c.status, c.pid] for c in self.data],
+            fmt=fmt,
         )
 
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import psutil
 
+from serverkit.core.display import display_table
+
 
 class MemorySnapshot:
     """Point-in-time memory statistics."""
@@ -24,6 +26,23 @@ class MemorySnapshot:
             f"RAM: {self.used_mb:.0f}/{self.total_mb:.0f} MB ({self.percent:.1f}%) | "
             f"Swap: {self.swap_used_mb:.0f}/{self.swap_total_mb:.0f} MB "
             f"({self.swap_percent:.1f}%)"
+        )
+
+    def display(self, *, use_rich: bool = True) -> str:
+        rows = [
+            ["RAM", f"{self.used_mb:.0f}", f"{self.total_mb:.0f}", f"{self.percent:.1f}"],
+            [
+                "Swap",
+                f"{self.swap_used_mb:.0f}",
+                f"{self.swap_total_mb:.0f}",
+                f"{self.swap_percent:.1f}",
+            ],
+        ]
+        return display_table(
+            "Memory",
+            ["Type", "Used MB", "Total MB", "Percent"],
+            rows,
+            use_rich=use_rich,
         )
 
     def to_dict(self) -> dict:
