@@ -107,8 +107,21 @@ class ProcessCollection(FluentCollection[Process]):
 
 class ProcessManager:
     def all(self) -> ProcessCollection:
-        processes: list[Process] = []
+        # psutil returns 0.0 on the first cpu_percent() call per process; prime first.
+        raw: list[psutil.Process] = []
         for proc in psutil.process_iter():
+            try:
+                raw.append(proc)
+            except psutil.NoSuchProcess:
+                continue
+        for proc in raw:
+            try:
+                proc.cpu_percent(None)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        processes: list[Process] = []
+        for proc in raw:
             process = ProcessFactory.create(proc)
             if process is not None:
                 processes.append(process)
