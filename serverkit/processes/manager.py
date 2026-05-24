@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import psutil
+
+from serverkit.processes.factory import ProcessFactory
 from serverkit.processes.process import Process
 
 
@@ -47,4 +50,9 @@ class ProcessManager:
     """Loads processes from the OS via psutil."""
 
     def all(self) -> ProcessCollection:
-        raise NotImplementedError
+        processes: list[Process] = []
+        for proc in psutil.process_iter():
+            process = ProcessFactory.create(proc)
+            if process is not None:
+                processes.append(process)
+        return ProcessCollection(processes)
