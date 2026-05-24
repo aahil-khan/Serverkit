@@ -5,6 +5,7 @@ from __future__ import annotations
 import psutil
 
 from serverkit.core.collection import FluentCollection
+from serverkit.core.display import display_table, export_table
 from serverkit.processes.factory import ProcessFactory
 from serverkit.processes.process import Process
 
@@ -41,6 +42,29 @@ class ProcessCollection(FluentCollection[Process]):
     def summarize(self) -> str:
         lines = [f"{p.name}: {p.memory_mb:.1f} MB" for p in self.data[:10]]
         return "\n".join(lines)
+
+    def display(self, *, use_rich: bool = True, limit: int = 25) -> str:
+        rows = [
+            [p.name, f"{p.memory_mb:.1f}", f"{p.cpu_percent:.1f}", p.pid, p.username or ""]
+            for p in self.data[:limit]
+        ]
+        return display_table(
+            "Processes",
+            ["Name", "Memory MB", "CPU %", "PID", "User"],
+            rows,
+            use_rich=use_rich,
+        )
+
+    def export(self, path: str, fmt: str = "csv") -> None:
+        export_table(
+            path,
+            ["name", "memory_mb", "cpu_percent", "pid", "username"],
+            [
+                [p.name, p.memory_mb, p.cpu_percent, p.pid, p.username or ""]
+                for p in self.data
+            ],
+            fmt=fmt,
+        )
 
     def group_by_user(self) -> dict[str, ProcessCollection]:
         groups: dict[str, list[Process]] = {}
