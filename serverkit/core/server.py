@@ -22,7 +22,7 @@ class Server:
 
     def __init__(self, config: Config | None = None) -> None:
         self._config = config or Config.load()
-        self._process_manager = ProcessManager()
+        self._process_manager = ProcessManager(self._config)
         self._log_manager = LogManager()
         self._workflow_manager = WorkflowManager()
         self._memory_manager = MemoryManager()

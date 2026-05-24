@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from serverkit.core.collection import FluentCollection
+from serverkit.core.display import display_table, export_table, resolve_use_rich
 from serverkit.docker.container import Container
 from serverkit.exceptions import OptionalDependencyError
 
@@ -22,6 +23,23 @@ class ContainerCollection(FluentCollection[Container]):
 
     def summarize(self) -> str:
         return "\n".join(repr(c) for c in self.data[:20])
+
+    def display(self, *, use_rich: bool | None = None) -> str:
+        rows = [[c.name, c.image, c.status, c.id] for c in self.data]
+        return display_table(
+            "Containers",
+            ["Name", "Image", "Status", "ID"],
+            rows,
+            use_rich=resolve_use_rich(use_rich),
+        )
+
+    def export(self, path: str, fmt: str = "csv") -> None:
+        export_table(
+            path,
+            ["name", "image", "status", "id"],
+            [[c.name, c.image, c.status, c.id] for c in self.data],
+            fmt=fmt,
+        )
 
 
 class DockerManager:

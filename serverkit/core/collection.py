@@ -24,3 +24,10 @@ class FluentCollection(Generic[T]):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({len(self)} items)"
+
+    def summarise(self) -> str:
+        """British spelling alias when subclass defines summarize()."""
+        summarize = getattr(self, "summarize", None)
+        if callable(summarize):
+            return summarize()
+        raise NotImplementedError(f"{self.__class__.__name__} has no summarize()")

@@ -4,12 +4,41 @@ import subprocess
 from pathlib import Path
 
 from serverkit.core.collection import FluentCollection
+from serverkit.core.display import display_table, export_table, resolve_use_rich
 from serverkit.users.session import FailedLogin, UserSession
 
 
 class SessionCollection(FluentCollection[UserSession]):
     def summarize(self) -> str:
         return "\n".join(repr(s) for s in self.data)
+
+    def display(self, *, use_rich: bool | None = None) -> str:
+        rows = [[s.user, s.tty, s.host, s.login_at] for s in self.data]
+        return display_table(
+            "Logged-in users",
+            ["User", "TTY", "Host", "Login"],
+            rows,
+            use_rich=resolve_use_rich(use_rich),
+        )
+
+    def export(self, path: str, fmt: str = "csv") -> None:
+        export_table(
+            path,
+            ["user", "tty", "host", "login_at"],
+            [[s.user, s.tty, s.host, s.login_at] for s in self.data],
+            fmt=fmt,
+        )
+
+
+class FailedLoginCollection(FluentCollection[FailedLogin]):
+    def display(self, *, use_rich: bool | None = None, limit: int = 20) -> str:
+        rows = [[f.line[:100]] for f in self.data[:limit]]
+        return display_table(
+            "Failed logins",
+            ["Line"],
+            rows,
+            use_rich=resolve_use_rich(use_rich),
+        )
 
 
 class UsersManager:
@@ -25,11 +54,12 @@ class UsersManager:
             )
         return SessionCollection(sessions)
 
-    def failed_logins(self, log_path: str = "/var/log/secure") -> list[FailedLogin]:
+    def failed_logins(self, log_path: str = "/var/log/secure") -> FailedLoginCollection:
         path = Path(log_path)
         if not path.exists():
             path = Path("/var/log/auth.log")
         if not path.exists():
-            return []
+            return FailedLoginCollection()
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]
-        return [FailedLogin(line) for line in lines if "Failed" in line or "failure" in line]
+        items = [FailedLogin(line) for line in lines if "Failed" in line or "failure" in line]
+        return FailedLoginCollection(items)

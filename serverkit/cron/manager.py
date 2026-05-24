@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from serverkit.core.collection import FluentCollection
+from serverkit.core.display import display_table, export_table, resolve_use_rich
 from serverkit.cron.job import CronJob
 
 
@@ -13,6 +14,29 @@ class CronCollection(FluentCollection[CronJob]):
 
     def summarize(self) -> str:
         return "\n".join(repr(j) for j in self.data[:20])
+
+    def display(self, *, use_rich: bool | None = None, limit: int = 25) -> str:
+        rows = [
+            [j.schedule, j.command[:60], j.source, "yes" if j.suspicious else ""]
+            for j in self.data[:limit]
+        ]
+        return display_table(
+            "Cron jobs",
+            ["Schedule", "Command", "Source", "Suspicious"],
+            rows,
+            use_rich=resolve_use_rich(use_rich),
+        )
+
+    def export(self, path: str, fmt: str = "csv") -> None:
+        export_table(
+            path,
+            ["schedule", "command", "source", "suspicious"],
+            [
+                [j.schedule, j.command, j.source, j.suspicious]
+                for j in self.data
+            ],
+            fmt=fmt,
+        )
 
 
 class CronManager:

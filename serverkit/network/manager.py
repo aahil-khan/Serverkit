@@ -3,7 +3,7 @@ from __future__ import annotations
 import psutil
 
 from serverkit.core.collection import FluentCollection
-from serverkit.core.display import display_table, export_table
+from serverkit.core.display import display_table, export_table, resolve_use_rich
 from serverkit.network.connection import Connection, NetworkInterface
 
 
@@ -30,7 +30,7 @@ class InterfaceCollection(FluentCollection[NetworkInterface]):
             for i in self.data[:10]
         )
 
-    def display(self, *, use_rich: bool = True) -> str:
+    def display(self, *, use_rich: bool | None = None) -> str:
         rows = [
             [i.name, f"{i.bytes_sent_mb:.1f}", f"{i.bytes_recv_mb:.1f}"]
             for i in self.data
@@ -39,7 +39,7 @@ class InterfaceCollection(FluentCollection[NetworkInterface]):
             "Network interfaces",
             ["Interface", "Sent MB", "Recv MB"],
             rows,
-            use_rich=use_rich,
+            use_rich=resolve_use_rich(use_rich),
         )
 
 
@@ -65,7 +65,7 @@ class ConnectionCollection(FluentCollection[Connection]):
             for c in self.data[:10]
         )
 
-    def display(self, *, use_rich: bool = True, limit: int = 25) -> str:
+    def display(self, *, use_rich: bool | None = None, limit: int = 25) -> str:
         rows = [
             [c.local_addr, c.remote_addr, c.status, c.pid or ""]
             for c in self.data[:limit]
@@ -74,7 +74,7 @@ class ConnectionCollection(FluentCollection[Connection]):
             "Connections",
             ["Local", "Remote", "Status", "PID"],
             rows,
-            use_rich=use_rich,
+            use_rich=resolve_use_rich(use_rich),
         )
 
     def export(self, path: str, fmt: str = "csv") -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import psutil
 
 from serverkit.core.collection import FluentCollection
-from serverkit.core.display import display_table, export_table
+from serverkit.core.display import display_table, export_table, resolve_use_rich
 from serverkit.disk.partition import FileEntry, Partition, directory_size_mb, scan_largest_files
 
 
@@ -28,7 +28,7 @@ class DiskCollection(FluentCollection[Partition]):
         ]
         return "\n".join(lines)
 
-    def display(self, *, use_rich: bool = True) -> str:
+    def display(self, *, use_rich: bool | None = None) -> str:
         rows = [
             [p.mountpoint, p.device, f"{p.used_mb:.0f}", f"{p.total_mb:.0f}", f"{p.percent:.1f}"]
             for p in self.data
@@ -37,7 +37,7 @@ class DiskCollection(FluentCollection[Partition]):
             "Disk partitions",
             ["Mount", "Device", "Used MB", "Total MB", "Use %"],
             rows,
-            use_rich=use_rich,
+            use_rich=resolve_use_rich(use_rich),
         )
 
     def export(self, path: str, fmt: str = "csv") -> None:

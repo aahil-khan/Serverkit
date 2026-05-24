@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from serverkit.core.display import display_table, export_table
+from serverkit.core.display import display_table, export_table, resolve_use_rich
 from serverkit.exceptions import LogFileNotFound
 
 
@@ -100,9 +100,14 @@ class LogFile:
         warns = sum(1 for line in self._lines if "WARNING" in line)
         return f"Total: {total} lines | Errors: {errors} | Warnings: {warns}"
 
-    def display(self, *, use_rich: bool = True, limit: int = 30) -> str:
+    def summarise(self) -> str:
+        return self.summarize()
+
+    def display(self, *, use_rich: bool | None = None, limit: int = 30) -> str:
         rows = [[line[:120]] for line in self._filtered[:limit]]
-        return display_table("Log lines", ["Line"], rows, use_rich=use_rich)
+        return display_table(
+            "Log lines", ["Line"], rows, use_rich=resolve_use_rich(use_rich)
+        )
 
     def export(self, path: str, fmt: str = "csv") -> None:
         export_table(path, ["line"], [[line] for line in self._filtered], fmt=fmt)

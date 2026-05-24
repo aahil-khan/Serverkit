@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+from serverkit.core.display import display_table, resolve_use_rich
+
 
 class EnvSnapshot:
     def __init__(self, data: dict[str, str] | None = None) -> None:
@@ -27,6 +29,19 @@ class EnvSnapshot:
 
     def summarize(self) -> str:
         return f"{len(self._data)} environment variables"
+
+    def summarise(self) -> str:
+        return self.summarize()
+
+    def display(self, *, use_rich: bool | None = None, limit: int = 30) -> str:
+        items = sorted(self._data.items())[:limit]
+        rows = [[k, v[:80]] for k, v in items]
+        return display_table(
+            "Environment",
+            ["Variable", "Value"],
+            rows,
+            use_rich=resolve_use_rich(use_rich),
+        )
 
     def __repr__(self) -> str:
         return f"EnvSnapshot({len(self._data)} vars)"

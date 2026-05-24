@@ -39,6 +39,7 @@ include = ["serverkit*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "-m 'not integration'"
 markers = [
     "integration: tests that touch the live OS",
 ]

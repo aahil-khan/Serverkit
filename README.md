@@ -49,7 +49,8 @@ pip install -e ".[dev]"           # core + pytest
 pip install -e ".[rich]"          # table output
 pip install -e ".[docker]"        # container support
 pip install -e ".[all]"           # everything
-pytest
+pytest                              # offline unit tests (default)
+pytest -m integration               # live OS / psutil tests
 ```
 
 Config: `~/.serverkit/config.json` (executor, rich output, Ollama model defaults).
