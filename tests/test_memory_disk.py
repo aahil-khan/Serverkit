@@ -15,6 +15,20 @@ def test_memory_snapshot_fields():
     assert "RAM" in snap.summarize()
 
 
+def test_largest_files_collection(tmp_path):
+    from serverkit.disk.manager import FileEntryCollection
+
+    big = tmp_path / "big.bin"
+    small = tmp_path / "small.txt"
+    big.write_bytes(b"x" * 5000)
+    small.write_text("hi", encoding="utf-8")
+    files = FileEntryCollection.__new__(FileEntryCollection)
+    from serverkit.disk.partition import scan_largest_files
+
+    coll = FileEntryCollection(scan_largest_files(str(tmp_path), limit=10))
+    assert coll.all()[0].path.endswith("big.bin")
+
+
 def test_disk_collection_filter():
     from serverkit.disk.partition import Partition
 

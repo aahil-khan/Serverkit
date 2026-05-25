@@ -83,3 +83,7 @@ class Server:
 
     def docker(self):
         return self._docker_manager
+
+    def containers(self):
+        """Alias for docker().containers() per main doc API."""
+        return self._docker_manager.containers()
