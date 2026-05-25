@@ -16,7 +16,7 @@ DEFAULTS: dict[str, Any] = {
     "output": {
         "use_rich": True,
         "theme": "default",
-        "show_progress": True,
+        "show_progress": False,
     },
     "workflow": {
         "executor": "sequential",

@@ -61,7 +61,7 @@ class ProcessCollection(FluentCollection[Process]):
             use_rich=resolve_use_rich(use_rich),
         )
 
-    def export(self, path: str, fmt: str = "csv") -> None:
+    def export(self, path: str, fmt: str = "csv") -> ProcessCollection:
         export_table(
             path,
             ["name", "memory_mb", "cpu_percent", "pid", "username"],
@@ -71,6 +71,7 @@ class ProcessCollection(FluentCollection[Process]):
             ],
             fmt=fmt,
         )
+        return self
 
     def group_by_name(self, *, use_aliases: bool = True) -> dict[str, ProcessCollection]:
         """Group PIDs by app name; use_aliases rolls Firefox children into firefox."""

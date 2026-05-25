@@ -77,13 +77,14 @@ class ConnectionCollection(FluentCollection[Connection]):
             use_rich=resolve_use_rich(use_rich),
         )
 
-    def export(self, path: str, fmt: str = "csv") -> None:
+    def export(self, path: str, fmt: str = "csv") -> ConnectionCollection:
         export_table(
             path,
             ["local_addr", "remote_addr", "status", "pid"],
             [[c.local_addr, c.remote_addr, c.status, c.pid] for c in self.data],
             fmt=fmt,
         )
+        return self
 
 
 class NetworkManager:

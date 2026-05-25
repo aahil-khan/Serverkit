@@ -47,7 +47,7 @@ class PortCollection(FluentCollection[Port]):
             use_rich=resolve_use_rich(use_rich),
         )
 
-    def export(self, path: str, fmt: str = "csv") -> None:
+    def export(self, path: str, fmt: str = "csv") -> PortCollection:
         export_table(
             path,
             ["port", "status", "pid", "process_name", "local_addr"],
@@ -57,6 +57,7 @@ class PortCollection(FluentCollection[Port]):
             ],
             fmt=fmt,
         )
+        return self
 
 
 class PortManager:

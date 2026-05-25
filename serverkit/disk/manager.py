@@ -40,7 +40,7 @@ class DiskCollection(FluentCollection[Partition]):
             use_rich=resolve_use_rich(use_rich),
         )
 
-    def export(self, path: str, fmt: str = "csv") -> None:
+    def export(self, path: str, fmt: str = "csv") -> DiskCollection:
         export_table(
             path,
             ["mountpoint", "device", "fstype", "used_mb", "total_mb", "percent"],
@@ -50,6 +50,7 @@ class DiskCollection(FluentCollection[Partition]):
             ],
             fmt=fmt,
         )
+        return self
 
     def largest_files(self, root: str, limit: int = 20) -> list[FileEntry]:
         return scan_largest_files(root, limit)

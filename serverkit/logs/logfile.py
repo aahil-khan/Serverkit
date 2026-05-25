@@ -109,8 +109,9 @@ class LogFile:
             "Log lines", ["Line"], rows, use_rich=resolve_use_rich(use_rich)
         )
 
-    def export(self, path: str, fmt: str = "csv") -> None:
+    def export(self, path: str, fmt: str = "csv") -> LogFile:
         export_table(path, ["line"], [[line] for line in self._filtered], fmt=fmt)
+        return self
 
     def __repr__(self) -> str:
         return f"LogFile({self.path!r}, {len(self._filtered)}/{len(self._lines)} lines)"
