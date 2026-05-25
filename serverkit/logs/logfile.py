@@ -28,6 +28,15 @@ class LogFile:
         self._lines = self._read_lines(path)
         self._filtered = self._lines[:]
 
+    @classmethod
+    def from_lines(cls, lines: list[str], path: str = "<remote>") -> LogFile:
+        """Build a LogFile from in-memory lines (e.g. fetched over SSH)."""
+        inst = cls.__new__(cls)
+        inst.path = path
+        inst._lines = [line.rstrip("\n") for line in lines]
+        inst._filtered = inst._lines[:]
+        return inst
+
     @staticmethod
     def _read_lines(path: str) -> list[str]:
         p = Path(path)

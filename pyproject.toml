@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "serverkit"
-version = "0.2.0"
+version = "0.3.0"
 description = "OOP Linux operations SDK with workflows"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,8 +25,11 @@ rich = [
 docker = [
     "docker>=7.0.0",
 ]
+remote = [
+    "paramiko>=3.0.0",
+]
 all = [
-    "serverkit[dev,rich,docker]",
+    "serverkit[dev,rich,docker,remote]",
 ]
 
 [project.scripts]

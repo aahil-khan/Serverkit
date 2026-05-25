@@ -21,6 +21,32 @@ from serverkit.workflows.manager import WorkflowManager
 class Server:
     """Entry point for all SDK usage."""
 
+    @classmethod
+    def connect(
+        cls,
+        host: str,
+        user: str | None = None,
+        *,
+        port: int = 22,
+        key_path: str | None = None,
+        password: str | None = None,
+        config: Config | None = None,
+    ):
+        """Open an SSH session and return a RemoteServer facade."""
+        from serverkit.remote.connection import SSHConnection
+        from serverkit.remote.server import RemoteServer
+
+        cfg = config or Config.load()
+        conn = SSHConnection.connect(
+            host,
+            user,
+            port=port,
+            key_path=key_path,
+            password=password,
+            config=cfg,
+        )
+        return RemoteServer(conn, config=cfg)
+
     def __init__(self, config: Config | None = None) -> None:
         self._config = config or Config.load()
         self._process_manager = ProcessManager(self._config)

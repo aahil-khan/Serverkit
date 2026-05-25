@@ -38,4 +38,8 @@ class ConfigurationError(ServerKitError):
 
 
 class OptionalDependencyError(ServerKitError):
-    """Raised when an optional extra (rich, docker) is not installed."""
+    """Raised when an optional extra (rich, docker, remote) is not installed."""
+
+
+class RemoteConnectionError(ServerKitError):
+    """Raised when SSH connect or remote command execution fails."""

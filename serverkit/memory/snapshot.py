@@ -10,7 +10,16 @@ from serverkit.core.display import display_table, resolve_use_rich
 class MemorySnapshot:
     """Point-in-time memory statistics."""
 
-    def __init__(self) -> None:
+    def __init__(self, data: dict | None = None) -> None:
+        if data is not None:
+            self.total_mb = float(data["total_mb"])
+            self.used_mb = float(data["used_mb"])
+            self.available_mb = float(data.get("available_mb", 0))
+            self.percent = float(data["percent"])
+            self.swap_total_mb = float(data.get("swap_total_mb", 0))
+            self.swap_used_mb = float(data.get("swap_used_mb", 0))
+            self.swap_percent = float(data.get("swap_percent", 0))
+            return
         vm = psutil.virtual_memory()
         swap = psutil.swap_memory()
         self.total_mb = vm.total / 1024 / 1024

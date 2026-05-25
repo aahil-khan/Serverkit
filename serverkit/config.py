@@ -25,6 +25,11 @@ DEFAULTS: dict[str, Any] = {
     "ollama": {
         "model": "phi3:mini",
     },
+    "remote": {
+        "default_user": None,
+        "key_path": None,
+        "port": 22,
+    },
 }
 
 
