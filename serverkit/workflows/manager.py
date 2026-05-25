@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from importlib import resources
 
 from serverkit.exceptions import WorkflowNotFound
 from serverkit.workflows import workflow as workflow_module
@@ -54,6 +55,31 @@ class WorkflowManager:
     def import_workflow(self, path: str) -> Workflow:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
+        workflow = Workflow.from_dict(data)
+        workflow.save()
+        return workflow
+
+    def list_catalog(self) -> list[str]:
+        """Return installable workflow template names from the bundled catalog."""
+        catalog = resources.files("serverkit.workflows.catalog")
+        return sorted(
+            entry.name.removesuffix(".json")
+            for entry in catalog.iterdir()
+            if entry.name.endswith(".json")
+        )
+
+    def import_from_catalog(self, name: str) -> Workflow:
+        """Load a bundled template by name and save it to the user workflow dir."""
+        catalog_name = name if name.endswith(".json") else f"{name}.json"
+        catalog = resources.files("serverkit.workflows.catalog")
+        try:
+            ref = catalog.joinpath(catalog_name)
+            data = json.loads(ref.read_text(encoding="utf-8"))
+        except (FileNotFoundError, TypeError, OSError) as exc:
+            raise WorkflowNotFound(
+                f"No catalog workflow named {name!r}. "
+                f"Available: {', '.join(self.list_catalog()) or '(none)'}"
+            ) from exc
         workflow = Workflow.from_dict(data)
         workflow.save()
         return workflow

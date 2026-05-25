@@ -36,6 +36,9 @@ serverkit = "serverkit.shell.repl:main"
 where = ["."]
 include = ["serverkit*"]
 
+[tool.setuptools.package-data]
+"serverkit.workflows.catalog" = ["*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

@@ -51,6 +51,10 @@ class Server:
             name, dry_run=dry_run, executor=executor, server=self
         )
 
+    def import_workflow(self, name: str):
+        """Import a bundled catalog template by name (e.g. nginx_health_check)."""
+        return self._workflow_manager.import_from_catalog(name)
+
     def memory(self):
         return self._memory_manager.snapshot()
 
