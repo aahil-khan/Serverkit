@@ -12,6 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "ServerKit Team" }]
 dependencies = [
     "psutil>=5.9.0",
+    "prompt_toolkit>=3.0.0",
 ]
 
 [project.optional-dependencies]
