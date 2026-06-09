@@ -89,6 +89,7 @@ pip install -e ".[dev]"           # core + pytest
 pip install -e ".[rich]"          # table output
 pip install -e ".[docker]"        # container support
 pip install -e ".[remote]"        # SSH remote Server.connect()
+pip install -e ".[ai]"            # Ollama natural-language (requests)
 pip install -e ".[all]"           # everything
 pytest                              # offline unit tests (default)
 pytest -m integration               # live OS / psutil tests
@@ -111,7 +112,7 @@ Config: `~/.serverkit/config.json` (executor, rich output, Ollama model defaults
 
 - **Eager execution** — filters run immediately; `.all()` / `.summarize()` are terminal.
 - **Workflow JSON** — `schema_version: 2` under `~/.serverkit/workflows/`.
-- **Optional deps** — `rich`, `docker`, `remote` (paramiko) fail with `OptionalDependencyError` if missing.
+- **Optional deps** — `rich`, `docker`, `remote` (paramiko), `ai` (requests / Ollama) fail with `OptionalDependencyError` if missing.
 
 ## Documentation
 
@@ -121,6 +122,7 @@ Config: `~/.serverkit/config.json` (executor, rich output, Ollama model defaults
 | `docs/serverkit_dev1_sdk_core.pdf` | Dev 1 SDK spec |
 | `docs/serverkit_dev2_shell_ai.pdf` | Dev 2 shell + AI |
 | `docs/DEV2_CONTRACTS.md` | Stable integration API |
+| `docs/AI_TESTING.md` | AI layer install, automated tests, manual Ollama checks |
 
 ## License
 
