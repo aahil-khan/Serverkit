@@ -7,6 +7,7 @@ from prompt_toolkit.completion import Completer, Completion
 # Completions from a static map (PDF). Keys: line prefix → candidate suffixes.
 _SDK_COMPLETIONS: dict[str, list[str]] = {
     "": [
+        "ask ",
         "processes",
         "logs",
         "workflow",

@@ -117,3 +117,9 @@ class Server:
     def containers(self):
         """Alias for docker().containers() per main doc API."""
         return self._docker_manager.containers()
+
+    def ask(self, query: str) -> str:
+        """Natural-language assist via Ollama (optional ``serverkit[ai]`` extra)."""
+        from serverkit.ai.analyzer import Analyzer
+
+        return Analyzer(self).ask(query)

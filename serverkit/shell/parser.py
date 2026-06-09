@@ -53,6 +53,9 @@ Remote (requires: pip install serverkit[remote]):
   connect HOST [--user U] [--key PATH] [--port N]
   disconnect
 
+AI (optional: pip install serverkit[ai]; Ollama running, model in config ollama.model):
+  ask <question>               Natural language → SDK summary / diagnosis / workflow
+
 Tab completion lists common SDK strings.
 """
 
@@ -224,6 +227,19 @@ def parse_input(text: str, state: "ReplState") -> str | None:
     # --- Meta / contracts (DEV2_CONTRACTS) ---
     if text == "help":
         return HELP_TEXT
+
+    if text.startswith("ask "):
+        query = text[4:].strip()
+        if not query:
+            return "Usage: ask <natural language question>"
+        try:
+            from serverkit.ai.analyzer import Analyzer
+
+            return Analyzer(state.active).ask(query)
+        except OptionalDependencyError as exc:
+            return f"{exc}\nInstall with: pip install serverkit[ai]"
+        except RuntimeError as exc:
+            return str(exc)
 
     if text == "catalog":
         names = WorkflowManager().list_catalog()

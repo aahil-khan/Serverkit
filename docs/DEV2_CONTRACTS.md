@@ -183,6 +183,7 @@ Suggested scope for v1 REPL:
    - `help` / tab-complete on `server.processes().`
 4. Always `print(x.summarize())` and `print(x.display())`, not bare `summarize()` in interactive mode.
 5. Entry point already wired: `serverkit` → `serverkit.shell.repl:main` in `pyproject.toml`.
+6. Natural language: `ask <query>` in the REPL (requires `pip install serverkit[ai]` and Ollama). Same routing is available as `Server().ask(query)` (lazy import).
 
 **Do not** shell out to `ps`/`grep` directly unless translating into SDK calls for consistency.
 

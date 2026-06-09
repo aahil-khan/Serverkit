@@ -110,6 +110,19 @@ def test_sdk_completer_nested_logs():
     assert any("logs(" in n for n in names)
 
 
+def test_parse_ask_invokes_analyzer(monkeypatch):
+    from serverkit import Server
+    from serverkit.shell.state import ReplState
+
+    monkeypatch.setattr(
+        "serverkit.ai.analyzer.Analyzer.ask",
+        lambda self, q: f"stub:{q}",
+    )
+    state = ReplState(Server())
+    out = parse_input("ask list hungry processes", state)
+    assert out == "stub:list hungry processes"
+
+
 def test_parse_import_calls_server():
     class S:
         _config = Config()
