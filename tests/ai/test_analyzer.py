@@ -7,21 +7,22 @@ from unittest.mock import MagicMock
 from serverkit.config import Config
 from serverkit.processes.process import Process
 from serverkit.processes.manager import ProcessCollection
-from serverkit.ai.analyzer import Analyzer, strip_model_json
+from serverkit.ai.analyzer import Analyzer
+from serverkit.ai.jsonutil import parse_model_json
 
 
-def test_strip_model_json_fenced():
+def test_parse_model_json_fenced():
     raw = """```json
 {"resource": "processes", "filters": []}
 ```"""
-    out = strip_model_json(raw)
-    assert '"resource": "processes"' in out
+    out = parse_model_json(raw)
+    assert out == {"resource": "processes", "filters": []}
 
 
-def test_strip_model_json_prefix_chatter():
+def test_parse_model_json_prefix_chatter():
     raw = 'Sure thing. {"resource": "processes", "filters": []}'
-    out = strip_model_json(raw)
-    assert out.startswith("{") and out.endswith("}")
+    out = parse_model_json(raw)
+    assert out == {"resource": "processes", "filters": []}
 
 
 class _StubOllama:
@@ -29,7 +30,7 @@ class _StubOllama:
         self._response = response
         self.prompts: list[str] = []
 
-    def ask(self, prompt: str) -> str:
+    def ask(self, prompt: str, **kwargs) -> str:
         self.prompts.append(prompt)
         return self._response
 
@@ -48,6 +49,16 @@ def _server_mock():
 
     srv.processes.side_effect = _procs
     return srv
+
+
+def test_analyzer_deterministic_cpu_skips_llm():
+    srv = _server_mock()
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("list processes with cpu above 0.5 percent")
+    assert "SHOULD_NOT" not in out
+    assert stub.prompts == []
+    assert "python" in out
 
 
 def test_analyzer_intent_processes_json():

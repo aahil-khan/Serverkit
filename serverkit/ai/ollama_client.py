@@ -33,13 +33,29 @@ class OllamaClient:
     def generate_url(self) -> str:
         return f"{self._base}/api/generate"
 
-    def ask(self, prompt: str) -> str:
+    def ask(
+        self,
+        prompt: str,
+        *,
+        temperature: float | None = None,
+        num_predict: int | None = None,
+        stop: list[str] | None = None,
+    ) -> str:
         requests = _requests()
         payload: dict[str, Any] = {
             "model": self.model,
             "prompt": prompt,
             "stream": False,
         }
+        if stop:
+            payload["stop"] = list(stop)
+        opts: dict[str, Any] = {}
+        if temperature is not None:
+            opts["temperature"] = temperature
+        if num_predict is not None:
+            opts["num_predict"] = num_predict
+        if opts:
+            payload["options"] = opts
         try:
             resp = requests.post(self.generate_url, json=payload, timeout=120)
             resp.raise_for_status()
