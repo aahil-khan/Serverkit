@@ -1,7 +1,8 @@
 """Natural-language → SDK actions via Ollama (Dev 2).
 
 Maps ``ask <query>`` to the same Server / RemoteServer entry points as the REPL
-(processes, logs, disk, ports, cron, env, memory, network, users, docker, services, systemctl).
+(processes, logs, disk, ports, cron, env, memory, network, users, docker, services, systemctl),
+plus **saved workflows** and **catalog** templates (like ``workflow list`` / ``catalog``).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from serverkit.ai.jsonutil import parse_model_json
 from serverkit.ai.ollama_client import DEFAULT_MODEL, OllamaClient
 from serverkit.exceptions import ExternalCommandNotFound, OptionalDependencyError
+from serverkit.workflows.manager import WorkflowManager
 from serverkit.workflows.workflow import Workflow
 
 if TYPE_CHECKING:
@@ -45,7 +47,56 @@ class Analyzer:
             return self._generate_workflow(query)
         if any(w in q for w in ("why", "diagnose", "what is causing")):
             return self._diagnose(query)
+        inv = self._try_workflow_inventory_query(q)
+        if inv is not None:
+            return inv
         return self._execute_intent(query)
+
+    def _try_workflow_inventory_query(self, q: str) -> str | None:
+        """Match ``list workflows`` / ``catalog`` style questions (no Ollama)."""
+        if self._matches_list_workflows(q):
+            return self._format_workflow_names(
+                WorkflowManager().list(),
+                empty="No workflows saved.",
+            )
+        if self._matches_list_catalog(q):
+            return self._format_workflow_names(
+                WorkflowManager().list_catalog(),
+                empty="(no catalog templates)",
+            )
+        return None
+
+    @staticmethod
+    def _matches_list_workflows(q: str) -> bool:
+        if re.search(r"\b(list\s+workflows|workflow\s+list)\b", q):
+            return True
+        if re.search(r"\b(show|what|which|enumerate)\s+(my\s+)?(saved\s+)?workflows\b", q):
+            return True
+        if re.search(r"\b(saved\s+)?workflow\s+names\b", q):
+            return True
+        return False
+
+    @staticmethod
+    def _matches_list_catalog(q: str) -> bool:
+        s = q.strip()
+        if s == "catalog":
+            return True
+        if re.match(r"^(please\s+)?(list|show)\s+catalog\b", s):
+            return True
+        if re.search(r"\bcatalog\s+templates?\b", q):
+            return True
+        if re.search(r"\b(bundled|built-?in|builtin)\s+workflow\s+templates?\b", q):
+            return True
+        return False
+
+    @staticmethod
+    def _format_workflow_names(names: list[str], *, empty: str, title: str | None = None) -> str:
+        if not names:
+            return empty
+        body = "\n".join(names)
+        if title:
+            return f"{title}\n{body}"
+        return body
 
     def _intent_prompt(self, query: str) -> str:
         return f"""You are a server operations assistant (Linux or Windows host, local or SSH). Output ONE JSON object only. No markdown, no prose before or after.
@@ -70,6 +121,7 @@ Resources and fields:
 - docker — required "operation": "containers" | "logs" | "stats". containers filters: running. For logs/stats: "container" (name), optional "tail" (number, logs only).
 - services — systemd service list: filters active, named (substring).
 - systemctl — "operation": "list_units" OR "status". For status set "unit" (string e.g. ssh.service).
+- workflows — "operation": "list_saved" OR "list_catalog" (no filters; same as REPL ``workflow list`` / ``catalog``).
 
 Examples:
 {{"resource":"processes","filters":[{{"action":"cpu_above","value":10}}]}}
@@ -82,6 +134,8 @@ Examples:
 {{"resource":"users","scope":"logged_in"}}
 {{"resource":"docker","operation":"containers","filters":[{{"action":"running"}}]}}
 {{"resource":"systemctl","operation":"status","unit":"nginx.service"}}
+{{"resource":"workflows","operation":"list_saved"}}
+{{"resource":"workflows","operation":"list_catalog"}}
 
 Query: {query}
 Output JSON on one line, under 900 characters, no markdown fences.
@@ -212,6 +266,7 @@ JSON:"""
                     '{"resource":"disk","filters":[{"action":"usage_above","value":80}]}\n'
                     '{"resource":"ports","filters":[{"action":"listening"}]}\n'
                     '{"resource":"logs","path":"/var/log/syslog","filters":[{"action":"errors"}]}\n'
+                    '{"resource":"workflows","operation":"list_saved"}\n'
                 )
             raw2 = self._ollama.ask(
                 repair,
@@ -258,6 +313,8 @@ JSON:"""
                 return self._run_services(action)
             if resource == "systemctl":
                 return self._run_systemctl(action)
+            if resource == "workflows":
+                return self._run_workflows(action)
         except OptionalDependencyError as exc:
             return f"{exc}\nInstall the documented optional extra (e.g. serverkit[docker])."
         except ExternalCommandNotFound as exc:
@@ -408,6 +465,15 @@ JSON:"""
                 return "systemctl status intent requires string field 'unit'."
             return sc.status(str(unit))
         return f"Unknown systemctl operation {op!r}. Use list_units or status."
+
+    def _run_workflows(self, action: dict[str, Any]) -> str:
+        op = (action.get("operation") or "list_saved").lower()
+        wm = WorkflowManager()
+        if op == "list_saved":
+            return self._format_workflow_names(wm.list(), empty="No workflows saved.")
+        if op == "list_catalog":
+            return self._format_workflow_names(wm.list_catalog(), empty="(no catalog templates)")
+        return f"Unknown workflows operation {op!r}. Use list_saved or list_catalog."
 
     @staticmethod
     def _format_grouped_processes(groups: dict[str, Any]) -> str:

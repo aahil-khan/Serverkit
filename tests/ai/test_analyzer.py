@@ -161,6 +161,33 @@ def test_analyzer_ports_listening_json():
     assert "443" not in out
 
 
+def test_analyzer_list_workflows_no_llm():
+    srv = _server_mock()
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("list workflows")
+    assert stub.prompts == []
+    assert "No workflows saved." in out or len(out.strip()) >= 1
+
+
+def test_analyzer_list_catalog_no_llm():
+    srv = _server_mock()
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("list catalog")
+    assert stub.prompts == []
+    assert isinstance(out, str)
+    assert len(out) > 0
+
+
+def test_analyzer_workflows_intent_json():
+    srv = _server_mock()
+    stub = _StubOllama('{"resource": "workflows", "operation": "list_saved"}')
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("tell me about workflow inventory for my report")
+    assert isinstance(out, str)
+
+
 def test_analyzer_workflow_branch(monkeypatch, tmp_path):
     import serverkit.workflows.workflow as wf_mod
 
