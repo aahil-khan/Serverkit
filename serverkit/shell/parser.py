@@ -94,7 +94,7 @@ Remote (requires: pip install serverkit[remote]):
   disconnect
 
 AI (optional: pip install serverkit[ai]; Ollama running, model in config ollama.model):
-  ask <question>               Natural language → SDK summary / diagnosis / workflow
+  ask <question>               Natural language → run SDK (processes, logs, disk, ports, cron, env, memory, network, users, docker, services, systemctl), diagnose, or workflows
 
 Tab completion lists common SDK strings.
 """
