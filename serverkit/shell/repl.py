@@ -6,6 +6,7 @@ from prompt_toolkit import PromptSession
 
 from serverkit import Server
 from serverkit.shell.autocomplete import SDKCompleter
+from serverkit.shell.banner import print_banner
 from serverkit.shell.parser import format_user_error, parse_input
 from serverkit.shell.state import ReplState
 
@@ -15,9 +16,7 @@ def run_shell() -> None:
     server = Server()
     state = ReplState(server)
     session = PromptSession(completer=SDKCompleter())
-    print("ServerKit shell v1.0")
-    print('Type "help" for commands. Ctrl+C or "exit" to quit.')
-    print()
+    print_banner()
 
     try:
         while True:

@@ -46,6 +46,7 @@ class OllamaClient:
             "model": self.model,
             "prompt": prompt,
             "stream": False,
+            "keep_alive": 0
         }
         if stop:
             payload["stop"] = list(stop)
