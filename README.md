@@ -1,6 +1,6 @@
 # ServerKit
 
-**Version 0.3.0** · Python **3.10+**
+**Version 0.3.1** · Python **3.10+**
 
 Object-oriented SDK and tooling for **Linux-style server operations** — processes, logs, memory, disk, services, workflows, and more — with a **fluent, chainable API** and an optional **interactive shell** plus **local AI** (Ollama).
 
@@ -254,4 +254,4 @@ pytest -m integration           # live OS / psutil (where applicable)
 
 ## License
 
-MIT (see `pyproject.toml`).
+MIT (see [`LICENSE`](LICENSE)).
