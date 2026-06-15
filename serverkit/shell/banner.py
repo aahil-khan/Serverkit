@@ -125,11 +125,13 @@ def _installed_extras_text() -> str:
 
 def _hint_line(*, accent: str, enabled: bool) -> str:
     help_word = _accent('"help"', accent=accent, enabled=enabled)
+    menu_word = _accent('"menu"', accent=accent, enabled=enabled)
     exit_word = _accent('"exit"', accent=accent, enabled=enabled)
     prefix = _value("Type ", enabled=enabled)
-    mid = _value(" for commands · ", enabled=enabled)
+    mid = _value(" for commands, ", enabled=enabled)
+    menu_mid = _value(" for guided mode · ", enabled=enabled)
     suffix = _value(" to quit", enabled=enabled)
-    return f"{_INDENT}{prefix}{help_word}{mid}{exit_word}{suffix}"
+    return f"{_INDENT}{prefix}{help_word}{mid}{menu_word}{menu_mid}{exit_word}{suffix}"
 
 
 def build_banner_lines(
@@ -339,8 +341,6 @@ def _ready_ping(*, accent: str) -> None:
 def _animate_logo(*, accent: str) -> None:
     _hide_cursor()
     try:
-        _animate_boot_prelude(accent=accent)
-        print()
         _animate_progress_bar("loading", accent=accent, clear_on_complete=True)
         _sweep_line(_LOGO[0], accent=accent)
         _static_fill_line(_LOGO[1], accent=accent)

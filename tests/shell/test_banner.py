@@ -33,6 +33,7 @@ def test_build_banner_lines_contains_serverkit_info():
     assert "Python:" in text
     assert "Modules:" in text
     assert '"help"' in text
+    assert '"menu"' in text
     assert '"exit"' in text
 
 

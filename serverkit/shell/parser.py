@@ -31,6 +31,7 @@ HELP_TEXT = """\
   Shell
   -----
   help                          Show this help
+  menu                          Interactive guided command builder
   clr | clear                   Clear the terminal (Windows: cls, Unix: clear)
   exit                          Leave the shell
 
