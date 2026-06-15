@@ -35,7 +35,7 @@ ServerKit is a **Python library** plus a small **terminal app** (`serverkit`) th
 2. The **manager** builds a **collection** (often an eager snapshot, e.g. all processes).
 3. Each **filter** narrows the in-memory list.
 4. A **terminal** method returns a string or list for display/export.
-5. **`server.run("wf")`** loads JSON, validates steps, runs the executor (sequential or parallel per config), merges results into the context dict.
+5. **`server.run("wf")`** loads JSON, validates steps, runs the executor (sequential by default; see §6 for the deprecated `parallel` setting), merges results into the context dict.
 
 ### 2.3 Execution flow (remote)
 
@@ -157,7 +157,7 @@ print(server.ask("list processes with cpu above 10 percent"))
 
 The REPL is a **thin command front-end** (pattern-matched strings → SDK calls). It still does **not** expose every `Server` method as its own keyword, but **fluent chains** now cover most local `Server` entry points plus a **one-line** `workflow("name").….save()` builder. Use **`from serverkit import Server`** in scripts for arbitrary composition and types the REPL does not parse.
 
-| `Server` API (local) | In REPL today? | Notes |
+| `Server` API | In REPL today? | Notes |
 |----------------------|----------------|--------|
 | `processes()` | **Yes** | Shorthand: `processes.all()`, `processes.memory_above(N)`, …; **`processes()`** + any **`ProcessCollection`** fluent chain (e.g. **`processes().for_user("u").display()`**) |
 | `logs(path)` | **Partial** | `logs("path").errors()` / `.warnings()` / `.contains()` / `.log_contains()` / `.match()` / `.summarize()` / `.tail` / `.display` / `.all` |
@@ -165,11 +165,12 @@ The REPL is a **thin command front-end** (pattern-matched strings → SDK calls)
 | `run`, `import_workflow`, workflows | **Yes** | `run`, `import`, `catalog`, `workflow list` / `create` / `run`; **one-liner** `workflow("NAME").….save()` (local only); interactive steps include **`export PATH`** |
 | `connect` / remote `active` | **Yes** | `connect … [--password P]` among other flags; **active** follows `connect` / `disconnect` |
 | `ask` / AI | **Yes** | `ask …` (requires `[ai]` + Ollama) |
-| `disk()`, `network()`, `ports()` | **Yes** (local) | Fluent `.usage_above` / `.mount_contains` / `network.interfaces()` / `network.connections()` / `ports.listening()` etc.; **not** on `RemoteServer` |
+| `disk()`, `network()`, `ports()` | **Yes** | Fluent `.usage_above` / `.mount_contains` / `network.interfaces()` / `network.connections()` / `ports.listening()` etc. **`disk().largest_files()`** on a remote target uses **GNU `find -printf`** over SSH (not the operator’s laptop disk). |
 | `systemctl()`, `services()`, `service()` | **Yes** | `systemctl.list_units()…`, **`systemctl.status|start|stop|restart("unit")`**, `services()…`, **`service UNIT …`** |
-| `docker()`, `containers()` | **Yes** (local) | **`docker.containers()…`** / **`containers()…`**, **`docker.logs("name"[, tail])`**, **`docker.stats("name")`**; needs `[docker]`; **not** on remote |
-| `cron()`, `users()`, `env()` | **Yes** (local) | `cron…`, `users.logged_in()…`, `env…`; **not** on remote |
+| `docker()`, `containers()` | **Yes** | **`docker.containers()…`** / **`containers()…`**, **`docker.logs("name"[, tail])`**, **`docker.stats("name")`**; needs `[docker]` on the **target** when using Docker. |
+| `cron()`, `users()`, `env()` | **Yes** | `cron…`, `users.logged_in()…`, `env…` |
 | `workflow()` fluent builder (one-liner) | **Yes** | `workflow("NAME").processes().….save()` in addition to interactive `workflow create` |
+| `process_history` | **SDK** | `active.process_history.diff(before, after)` with two `processes().all()` snapshots — not a dedicated REPL verb. |
 
 **`RemoteServer`** (SSH) implements the same **REPL-facing** entry points as local **`Server`** where data can be obtained over SSH: **processes, logs, memory, disk, network, ports, systemctl, services, service, cron, users, env, docker/containers, run, ask**. Parsing uses Linux tools on the host (`df`, `ss`, `printenv`, `docker` CLI, etc.); quality depends on the remote OS and installed binaries.
 
@@ -271,7 +272,9 @@ containers().summarize()
 processes().sort_by_memory().display()
 ```
 
-`service … start|stop|restart` runs real systemd actions — use with care. **`workflow("…").….save()`** requires a **local** Server (disconnect first). After **`connect`**, **`RemoteServer`** supports the same resource chains where data is fetched over SSH (see `help`).
+**Destructive process helpers** (`kill_all`, `terminate_all` on `ProcessCollection`) are **SDK-only** by default — the REPL does not map them, to avoid accidental mass signals.
+
+`service … start|stop|restart` runs real systemd actions — use with care. **`workflow("…").….save()`** uses the **local** `Server` instance inside the REPL (`state.server`), not the remote handle — **disconnect** (or use Python) if you need to author JSON on disk while a session is connected. After **`connect`**, **`RemoteServer`** supports the same resource chains where data is fetched over SSH (see `help`). **`disk().largest_files()`** on **`RemoteServer`** runs **`find`** on the **remote** host (requires GNU `find` with `-printf`; otherwise you get an empty or partial result).
 
 ---
 
@@ -285,7 +288,7 @@ Common keys:
 |----------|---------|
 | `output.use_rich` | Table rendering |
 | `output.show_progress` | Progress spinner on long scans |
-| `workflow.executor` | `sequential` or `parallel` |
+| `workflow.executor` | `sequential` (default). The value **`parallel`** is accepted for backward compatibility but **deprecated** — it emits a warning and still runs steps **sequentially** because steps share one mutable context dict. |
 | `workflow.versioning` | Version snapshots on save |
 | `remote.*` | Default user, key, port for `connect` |
 | `ollama.model` | Default model name for AI |
@@ -299,9 +302,10 @@ Environment: **`OLLAMA_HOST`** overrides Ollama base URL (default `http://127.0.
 | Doc | Use when |
 |-----|----------|
 | [`DEV2_CONTRACTS.md`](DEV2_CONTRACTS.md) | You extend the shell/AI or need exact `Server` / collection / workflow contracts |
+| [`SERVERKIT_GUIDE.md`](SERVERKIT_GUIDE.md) | One-page index + pointers (v0.3.0 status blurb) |
 | [`AI_TESTING.md`](AI_TESTING.md) | You set up Ollama, run AI tests, or debug model / JSON issues |
 | [`../README.md`](../README.md) | Overview, architecture diagram, repo layout |
-| PDFs in `docs/` | Original full specs |
+| PDFs referenced in older checklists | Original full specs — **may not be vendored** in this repository; use this guide + `DEV2_CONTRACTS.md` + source as the live contract. |
 
 ---
 

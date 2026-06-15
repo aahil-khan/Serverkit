@@ -213,6 +213,65 @@ def test_analyzer_workflow_branch(monkeypatch, tmp_path):
     assert (wf_dir / "ai_mem_test.json").exists()
 
 
+def test_analyzer_deterministic_disk_usage():
+    srv = MagicMock()
+    srv._config = Config()
+    dc = MagicMock()
+    dc.usage_above.return_value = dc
+    dc.summarize.return_value = "disk summary"
+    srv.disk.return_value = dc
+    stub = _StubOllama("SHOULD_NOT")
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("show disks above 50 percent")
+    assert out == "disk summary"
+    dc.usage_above.assert_called_once_with(50.0)
+    assert stub.prompts == []
+
+
+def test_analyzer_deterministic_largest_files():
+    srv = MagicMock()
+    srv._config = Config()
+    fe = MagicMock()
+    fe.summarize.return_value = "files here"
+    dc = MagicMock()
+    dc.largest_files.return_value = fe
+    srv.disk.return_value = dc
+    a = Analyzer(srv, ollama=_StubOllama("SHOULD_NOT"))
+    out = a.ask('largest files in "/tmp" limit 5')
+    assert out == "files here"
+    dc.largest_files.assert_called_once_with("/tmp", limit=5)
+
+
+def test_analyzer_process_history_deterministic(monkeypatch):
+    srv = MagicMock()
+    srv._config = Config()
+    srv.processes.side_effect = [
+        ProcessCollection([Process(1, "a", 10, 1)]),
+        ProcessCollection([Process(1, "a", 50, 2), Process(3, "new", 1, 0)]),
+    ]
+    monkeypatch.setattr("serverkit.ai.analyzer.time.sleep", lambda _s: None)
+    stub = _StubOllama("SHOULD_NOT")
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("diff processes wait 1 sec")
+    assert "Appeared" in out
+    assert "Changed" in out
+    assert stub.prompts == []
+
+
+def test_analyzer_disk_intent_json():
+    srv = MagicMock()
+    srv._config = Config()
+    dc = MagicMock()
+    dc.usage_above.return_value = dc
+    dc.summarize.return_value = "from json"
+    srv.disk.return_value = dc
+    json_line = '{"resource": "disk", "filters": [{"action": "usage_above", "value": 88}]}'
+    a = Analyzer(srv, ollama=_StubOllama(json_line))
+    out = a.ask("show disk situation")
+    assert out == "from json"
+    dc.usage_above.assert_called_once_with(88.0)
+
+
 def test_server_ask_delegates(monkeypatch):
     from serverkit import Server
 

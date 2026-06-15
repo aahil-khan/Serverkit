@@ -140,6 +140,8 @@ def mock_connection():
             return PS_AUX_SAMPLE
         if command.strip() == "free -m":
             return FREE_SAMPLE
+        if "find " in command and "-printf" in command:
+            return "2097152\t/var/big.bin\n1024\t/var/small.txt\n"
         if command.startswith("tail") or command.startswith("cat"):
             return "ERROR remote failure\nINFO ok\n"
         return ""
@@ -173,6 +175,15 @@ def test_remote_server_memory_and_logs(mock_connection):
     assert mem.total_mb == 4096
     log = srv.logs("/var/log/syslog")
     assert len(log.errors().all()) >= 1
+
+
+def test_remote_disk_largest_files(mock_connection):
+    srv = RemoteServer(mock_connection)
+    coll = srv.disk().largest_files("/var", limit=5)
+    rows = coll.all()
+    assert len(rows) == 2
+    assert rows[0].path == "/var/big.bin"
+    assert rows[0].size_mb == pytest.approx(2.0, rel=1e-3)
 
 
 def test_ssh_run_failure_raises():

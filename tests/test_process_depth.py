@@ -21,3 +21,18 @@ def test_history_diff():
     diff = ProcessHistory.diff(before, after)
     assert len(diff.appeared) == 1
     assert len(diff.changed) == 1
+
+
+def test_history_format_diff():
+    before = [Process(1, "a", 10, 1)]
+    after = [Process(1, "a", 50, 2), Process(2, "b", 1, 0)]
+    text = ProcessHistory.format_diff(ProcessHistory.diff(before, after))
+    assert "Appeared" in text
+    assert "Changed" in text
+    assert "pid 2" in text
+
+
+def test_history_format_diff_empty():
+    before = [Process(1, "a", 10, 1)]
+    text = ProcessHistory.format_diff(ProcessHistory.diff(before, before))
+    assert "No process changes" in text

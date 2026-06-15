@@ -6,7 +6,7 @@ Object-oriented SDK and tooling for **Linux-style server operations** — proces
 
 Think **typed objects and workflows** instead of re-learning `ps` flags and one-off `grep` pipelines.
 
-**→ Full guide (how it works + how to use):** [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)
+**→ Full guide (how it works + how to use):** [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) · **Short index:** [`docs/SERVERKIT_GUIDE.md`](docs/SERVERKIT_GUIDE.md)
 
 ---
 

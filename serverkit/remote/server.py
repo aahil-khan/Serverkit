@@ -6,13 +6,13 @@ import shlex
 
 from serverkit.config import Config
 from serverkit.cron.manager import CronCollection
-from serverkit.disk.manager import DiskCollection
 from serverkit.docker.manager import ContainerCollection
 from serverkit.env.vars import EnvSnapshot
 from serverkit.logs.logfile import LogFile
 from serverkit.memory.snapshot import MemorySnapshot
 from serverkit.processes.manager import ProcessCollection
 from serverkit.remote.connection import SSHConnection
+from serverkit.remote.disk import RemoteDiskCollection
 from serverkit.remote.facade_managers import (
     RemoteDockerManager,
     RemoteNetworkManager,
@@ -60,6 +60,13 @@ class RemoteServer:
     def user(self) -> str:
         return self._conn.user
 
+    @property
+    def process_history(self):
+        """Compare two process snapshots (see :class:`serverkit.processes.history.ProcessHistory`)."""
+        from serverkit.processes.history import ProcessHistory
+
+        return ProcessHistory
+
     def close(self) -> None:
         self._conn.close()
 
@@ -89,9 +96,9 @@ class RemoteServer:
         out = self._conn.run("free -m")
         return MemorySnapshot(memory_from_free_m(out))
 
-    def disk(self) -> DiskCollection:
+    def disk(self) -> RemoteDiskCollection:
         out = self._conn.run("df -P 2>/dev/null || true", check=False)
-        return DiskCollection(disk_partitions_from_df(out))
+        return RemoteDiskCollection(self._conn, disk_partitions_from_df(out))
 
     def network(self) -> RemoteNetworkManager:
         return self._network

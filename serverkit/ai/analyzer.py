@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +22,27 @@ from serverkit.workflows.workflow import Workflow
 if TYPE_CHECKING:
     from serverkit.logs.logfile import LogFile
     from serverkit.processes.manager import ProcessCollection
+
+
+def _extract_largest_files_path_and_limit(query: str) -> tuple[str, int] | None:
+    """Match ``largest files in|under|at PATH`` with optional ``limit N`` / ``top N``."""
+    ql = query.lower()
+    if "largest" not in ql or "files" not in ql:
+        return None
+    for pattern in (
+        r"largest\s+files\s+(?:in|under|at)\s+\"([^\"]+)\"",
+        r"largest\s+files\s+(?:in|under|at)\s+'([^']+)'",
+        r"largest\s+files\s+(?:in|under|at)\s+(/\S+)",
+    ):
+        m = re.search(pattern, query, re.IGNORECASE)
+        if m:
+            path = m.group(1).strip()
+            if not path:
+                return None
+            lm = re.search(r"(?:limit|top)\s+(\d+)\b", ql)
+            lim = int(lm.group(1)) if lm else 20
+            return path, max(1, min(lim, 500))
+    return None
 
 
 class Analyzer:
@@ -111,7 +133,8 @@ Rules:
 Resources and fields:
 - processes — filters: memory_above, cpu_above, named, sort_by_memory, sort_by_cpu, for_user (value username), group_by_name (no value; must be last filter).
 - logs — required "path" (log file). filters: errors, warnings, contains, match (regex string), tail (n), since, until (ISO datetime strings e.g. 2024-06-01T12:00:00).
-- disk — filters: usage_above (percent), mount_contains (substring), sort_by_used.
+- disk — filters: usage_above (percent), mount_contains (substring), sort_by_used. Terminal action: largest_files with "value" = root path string, optional "limit" (number).
+- process_history — optional top-level "delay_seconds" (number, default 0); empty filters or omit.
 - ports — filters: listening, port (number), owned_by (pid number).
 - cron — filters: suspicious_only.
 - env — filters: keys_matching (substring on var names), contains (substring in values).
@@ -136,6 +159,15 @@ Examples:
 {{"resource":"systemctl","operation":"status","unit":"nginx.service"}}
 {{"resource":"workflows","operation":"list_saved"}}
 {{"resource":"workflows","operation":"list_catalog"}}
+
+Query: show disk partitions above 80 percent
+JSON: {{"resource": "disk", "filters": [{{"action": "usage_above", "value": 80}}]}}
+
+Query: largest files in /var/log limit 10
+JSON: {{"resource": "disk", "filters": [{{"action": "largest_files", "value": "/var/log", "limit": 10}}]}}
+
+Query: what processes changed in the last second
+JSON: {{"resource": "process_history", "delay_seconds": 1, "filters": []}}
 
 Query: {query}
 Output JSON on one line, under 900 characters, no markdown fences.
@@ -177,18 +209,48 @@ JSON:"""
                     "filters": [{"action": "named", "value": m.group(1)}],
                 }
             )
+        if (
+            "process history" in q
+            or re.search(r"\bdiff\s+processes\b", q)
+            or re.search(r"processes?\s+that\s+(?:appeared|disappeared)\b", q)
+            or re.search(r"what\s+process(?:es)?\s+changed\b", q)
+        ):
+            delay = 0.0
+            dm = re.search(
+                r"(?:after|wait)\s+(\d+(?:\.\d+)?)\s*(?:s(?:ec(?:ond)?s?)?)?\b",
+                q,
+            )
+            if dm:
+                delay = float(dm.group(1))
+            return self._run_action(
+                {"resource": "process_history", "delay_seconds": delay, "filters": []}
+            )
         m = re.search(
+            r"(?:disks?|disk\s+usage|partitions?)\s+(?:usage\s+)?(?:above|over|>|greater\s+than)\s*(\d+(?:\.\d+)?)\s*(?:%|percent)?\b",
+            q,
+        ) or re.search(
             r"(?:disk|disks|partition|mount|usage)\s*(?:above|over|>|greater\s+than)\s*(\d+)\s*(?:%|percent)?",
             q,
         ) or re.search(
             r"(?:above|over|>|)\s*(\d+)\s*(?:%|percent)\s*(?:disk|usage|partition)",
             q,
         )
-        if m and ("disk" in q or "partition" in q or "mount" in q or "usage" in q):
+        if m and (
+            "disk" in q or "disks" in q or "partition" in q or "mount" in q or "usage" in q
+        ):
             return self._run_action(
                 {
                     "resource": "disk",
                     "filters": [{"action": "usage_above", "value": float(m.group(1))}],
+                }
+            )
+        path_lim = _extract_largest_files_path_and_limit(query)
+        if path_lim is not None:
+            root, lim = path_lim
+            return self._run_action(
+                {
+                    "resource": "disk",
+                    "filters": [{"action": "largest_files", "value": root, "limit": lim}],
                 }
             )
         if re.search(
@@ -289,12 +351,21 @@ JSON:"""
     def _run_action(self, action: dict[str, Any]) -> str:
         resource = (action.get("resource") or "").lower()
         try:
+            if resource == "process_history":
+                delay = action.get("delay_seconds")
+                if delay is None:
+                    delay = action.get("delay")
+                try:
+                    delay_f = float(delay) if delay is not None else 0.0
+                except (TypeError, ValueError):
+                    delay_f = 0.0
+                return self._run_process_history(delay_f)
             if resource == "processes":
                 return self._run_processes(action)
             if resource == "logs":
                 return self._run_logs(action)
             if resource == "disk":
-                return self._run_disk(action)
+                return self._run_disk_action(action)
             if resource == "ports":
                 return self._run_ports(action)
             if resource == "cron":
@@ -322,6 +393,36 @@ JSON:"""
         except Exception as exc:
             return f"SDK error while running intent ({resource!r}): {exc}"
         return f"Unsupported or empty resource: {resource!r}. Use help for supported REPL/SDK commands."
+
+    def _run_process_history(self, delay_seconds: float) -> str:
+        from serverkit.processes.history import ProcessHistory
+
+        before = list(self.server.processes().all())
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+        after = list(self.server.processes().all())
+        diff = ProcessHistory.diff(before, after)
+        return ProcessHistory.format_diff(diff)
+
+    def _run_disk_action(self, action: dict[str, Any]) -> str:
+        from serverkit.disk.manager import DiskCollection
+
+        coll: DiskCollection = self.server.disk()
+        filters = self._normalized_filters(action.get("filters"))
+        for f in filters:
+            act = f.get("action")
+            if act == "largest_files":
+                path = str(f.get("value") or "")
+                if not path:
+                    return "largest_files filter requires string path in 'value'."
+                try:
+                    lim = int(f.get("limit") or 20)
+                except (TypeError, ValueError):
+                    lim = 20
+                lim = max(1, min(lim, 500))
+                return coll.largest_files(path, limit=lim).summarize()
+            coll = self._apply_disk_filter(coll, f)
+        return self._terminal_output(coll, action.get("terminal"))
 
     @staticmethod
     def _normalized_filters(filters: Any) -> list[dict[str, Any]]:
