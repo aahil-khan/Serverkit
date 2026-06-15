@@ -101,7 +101,9 @@ def run_shell() -> None:
 
 def main() -> None:
     """Console script: `serverkit`."""
-    run_shell()
+    from serverkit.shell.cli import main as cli_main
+
+    cli_main()
 
 
 if __name__ == "__main__":
