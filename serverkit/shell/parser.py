@@ -35,6 +35,7 @@ Processes (chain uses active target: local or connected remote):
   processes.named("name")
   processes.sort_by_memory().all()
   processes.sort_by_cpu().all()
+  (SDK) active.process_history.diff(list_a, list_b)  # two processes().all() snapshots; not a shell verb
 
 Logs:
   logs("path").errors()         Summarize ERROR lines

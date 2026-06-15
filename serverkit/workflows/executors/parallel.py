@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+import warnings
 
 from serverkit.workflows.executors.sequential import SequentialExecutor
 
 
 class ParallelExecutor(SequentialExecutor):
-    """Run independent steps in parallel; falls back to sequential for safety."""
+    """Deprecated: workflows share mutable context, so execution remains sequential."""
 
     def execute(self, workflow, server, *, dry_run: bool = False) -> dict:
-        if dry_run or len(workflow.steps) <= 1:
-            return super().execute(workflow, server, dry_run=dry_run)
-        # Conservative: parallel only when all steps declare parallel_safe
-        if not all(getattr(s, "parallel_safe", False) for s in workflow.steps):
-            return super().execute(workflow, server, dry_run=dry_run)
-        return super().execute(workflow, server, dry_run=False)
+        warnings.warn(
+            "workflow.executor 'parallel' is deprecated: steps share one mutable "
+            "context dict, so the engine always runs sequentially. Use "
+            "'sequential' in ~/.serverkit/config.json.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return super().execute(workflow, server, dry_run=dry_run)

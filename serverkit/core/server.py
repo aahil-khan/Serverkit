@@ -53,6 +53,13 @@ class Server:
         )
         return RemoteServer(conn, config=cfg)
 
+    @property
+    def process_history(self):
+        """Compare two process snapshots (see :class:`serverkit.processes.history.ProcessHistory`)."""
+        from serverkit.processes.history import ProcessHistory
+
+        return ProcessHistory
+
     def __init__(self, config: Config | None = None) -> None:
         self._config = config or Config.load()
         self._process_manager = ProcessManager(self._config)

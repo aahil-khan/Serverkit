@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING, Any
 from serverkit.workflows.step import WorkflowStep
 
 if TYPE_CHECKING:
+    from serverkit.core.protocol import ServerFacade
     from serverkit.core.server import Server
     from serverkit.logs.logfile import LogFile
     from serverkit.processes.manager import ProcessCollection
 
 
-def _server(context: dict) -> Server:
+def _server(context: dict) -> ServerFacade:
     from serverkit import Server
 
     return context.get("_server") or Server()
@@ -188,6 +189,8 @@ class SummaryStep(WorkflowStep):
 
 
 class ExportStep(WorkflowStep):
+    parallel_safe = False
+
     def __init__(self, path: str) -> None:
         self.path = path
 
@@ -218,6 +221,8 @@ class ExportStep(WorkflowStep):
 
 
 class ChainStep(WorkflowStep):
+    parallel_safe = False
+
     def __init__(self, workflow: str) -> None:
         self.workflow = workflow
 
@@ -238,6 +243,8 @@ class ChainStep(WorkflowStep):
 
 
 class ConditionalStep(WorkflowStep):
+    parallel_safe = False
+
     def __init__(self, when: str, key: str) -> None:
         self.when = when
         self.key = key

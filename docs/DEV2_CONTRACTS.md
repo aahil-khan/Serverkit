@@ -32,7 +32,11 @@ with Server.connect("host", user="deploy", key_path="~/.ssh/id_ed25519") as remo
     remote.run("memory_audit")
 ```
 
-`RemoteServer` supports workflow-facing methods only: `processes()`, `logs(path)`, `memory()`, `services()`, `service(name)`, `run(name, …)`. **Not on remote v1:** `disk()`, `docker()`, `cron()`, `workflow()` builder, `import_workflow()` (import locally, then `remote.run(name)`).
+`RemoteServer` mirrors the **workflow-facing** local API for everything you can reasonably drive over SSH: `processes()`, `logs(path)`, `memory()`, `disk()`, `network()`, `ports()`, `systemctl()`, `services()`, `service(name)`, `cron()`, `users()`, `env()`, `docker()` / `containers()`, `run(...)`, `ask(...)`.
+
+**Not on remote (by design):** `workflow()` builder and `import_workflow()` — define or import JSON **locally**, then `remote.run("name")` so `_server` in the workflow context is the SSH facade.
+
+**Remote disk note:** `disk().largest_files(root)` runs **`find -printf`** on the **remote** host (GNU find). It does not scan the operator’s machine.
 
 ---
 
@@ -46,17 +50,19 @@ with Server.connect("host", user="deploy", key_path="~/.ssh/id_ed25519") as remo
 | `run(name, dry_run=False, executor=None)` | `dict` | Passes `self` as `context["_server"]` |
 | `import_workflow(name)` | `Workflow` | Bundled catalog → saves under `~/.serverkit/workflows/` |
 | `memory()` | `MemorySnapshot` | |
-| `disk()` | `DiskCollection` | `.largest_files(root, limit=20)` → `FileEntryCollection` |
-| `network()` | `NetworkManager` | |
+| `disk()` | `DiskCollection` | Partitions from psutil (local) or `df` (remote). **Remote** `.largest_files()` uses GNU `find` over SSH, not the client disk. |
+| `network()` | `NetworkManager` / `RemoteNetworkManager` | |
 | `ports()` | `PortCollection` | |
-| `systemctl()` | `SystemctlManager` | Low-level; prefer `services()` / `service()` |
+| `systemctl()` | `SystemctlManager` / `RemoteSystemctlManager` | Low-level; prefer `services()` / `service()` |
 | `services()` | `ServiceCollection` | |
 | `service(name)` | `ServiceHandle` | `.status()`, `.start()`, `.stop()`, `.restart()`, `.is_active()` |
 | `cron()` | `CronCollection` | |
-| `users()` | `UsersManager` | |
+| `users()` | `UsersManager` / `RemoteUsersManager` | |
 | `env()` | `EnvSnapshot` | |
-| `docker()` | `DockerManager` | Requires `pip install serverkit[docker]` |
+| `docker()` | `DockerManager` / `RemoteDockerManager` | Requires `pip install serverkit[docker]` where Docker is used |
 | `containers()` | `ContainerCollection` | Alias for `docker().containers()` |
+| `process_history` | (property) | `ProcessHistory` — use `.diff(before, after)` with two `list[Process]` snapshots |
+| `ask(query)` | `str` | Requires `pip install serverkit[ai]` |
 | `Server.connect(...)` | `RemoteServer` | Requires `pip install serverkit[remote]` |
 
 ---
@@ -83,7 +89,7 @@ server.services().active().named("nginx").summarize()
 | `.display(use_rich=None)` | `str` table (Rich if installed + config) |
 | `.export(path, fmt="csv")` | writes file; returns `self` for chaining |
 
-`ProcessCollection` also has `.group_by_name()`, `.display_by_name()`, `.kill_all()` / `.terminate_all()` — destructive; REPL should confirm or restrict.
+`ProcessCollection` also has `.group_by_name()`, `.display_by_name()`, `.kill_all()` / `.terminate_all()` — destructive; **not exposed in the REPL parser** (SDK / scripts only) to avoid accidental mass signals.
 
 ---
 
@@ -111,7 +117,8 @@ server.run("memory_audit", dry_run=True)
 
 - `schema_version: 2`
 - Step `type` strings (registered in `StepFactory`):  
-  `process_filter`, `sort`, `log_filter`, `tail`, `summary`, `export`, `chain`, `conditional`
+  `process_filter`, `sort`, `log_filter`, `tail`, `summary`, `export`, `chain`, `conditional`  
+  Some step classes set `parallel_safe` for documentation; the **`parallel`** workflow executor is deprecated and still runs **sequentially** (see configuration section).
 
 ### Runtime context (`run()` return value)
 
@@ -142,7 +149,7 @@ Path: `~/.serverkit/config.json` (merge with defaults in `serverkit/config.py`).
 |-----|---------|
 | `output.use_rich` | Table rendering |
 | `output.show_progress` | ASCII spinner on long scans (default `false`) |
-| `workflow.executor` | `sequential` or `parallel` |
+| `workflow.executor` | `sequential` (default). **`parallel`** is deprecated: still sequential, emits `UserWarning` (shared mutable workflow context). |
 | `workflow.versioning` | Save versioned copies on `.save()` |
 | `remote.default_user`, `remote.key_path`, `remote.port` | SSH defaults for `Server.connect()` |
 | `ollama.model` | Dev 2 AI default model |
@@ -191,7 +198,7 @@ Suggested scope for v1 REPL:
 
 ## AI layer (Dev 2)
 
-Stubs: `serverkit/ai/ollama_client.py`, `serverkit/ai/analyzer.py`.
+Implemented under `serverkit/ai/`: **`OllamaClient`** (HTTP to Ollama), **`Analyzer`** (intent routing, diagnose, workflow JSON generation), and **`Server.ask` / `RemoteServer.ask`** (lazy import). Requires **`pip install serverkit[ai]`** and a running Ollama instance; see **[`AI_TESTING.md`](AI_TESTING.md)** for install, pytest layout, and model troubleshooting.
 
 Intended flow:
 

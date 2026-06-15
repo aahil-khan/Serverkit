@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from serverkit.cron.job import CronJob
-from serverkit.disk.partition import Partition
+from serverkit.disk.partition import FileEntry, Partition
 from serverkit.network.connection import Connection, NetworkInterface
 from serverkit.ports.port import Port
 
@@ -46,6 +46,25 @@ def disk_partitions_from_df(output: str) -> list[Partition]:
             )
         )
     return parts_out
+
+
+def file_entries_from_find_printf_output(output: str, *, limit: int = 20) -> list[FileEntry]:
+    """Parse ``find … -printf '%s\\t%p\\n'`` lines (size bytes, tab, path) into ``FileEntry`` rows."""
+    entries: list[FileEntry] = []
+    for raw in output.strip().splitlines():
+        line = raw.strip()
+        if "\t" not in line:
+            continue
+        size_s, path = line.split("\t", 1)
+        if not path:
+            continue
+        try:
+            size_b = int(size_s)
+        except ValueError:
+            continue
+        entries.append(FileEntry(path, size_b / 1024 / 1024))
+    entries.sort(key=lambda e: e.size_mb, reverse=True)
+    return entries[:limit]
 
 
 def env_dict_from_printenv(output: str) -> dict[str, str]:
