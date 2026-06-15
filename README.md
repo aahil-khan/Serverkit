@@ -156,8 +156,6 @@ The AI layer routes requests through the SDK — it does not execute arbitrary s
 | Guide | Description |
 |-------|-------------|
 | [User guide](docs/USER_GUIDE.md) | Mental model, SDK, REPL, remote, AI, troubleshooting |
-| [REPL verification](docs/REPL_VERIFICATION.md) | Copy-paste checks for local and remote sessions |
-| [AI testing](docs/AI_TESTING.md) | Ollama setup, automated tests, model tips |
 | [Examples](examples/) | Runnable sample scripts |
 
 ---
