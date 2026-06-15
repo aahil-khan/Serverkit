@@ -96,6 +96,34 @@ def test_parse_processes_memory_above():
     assert "nginx" not in out
 
 
+def test_parse_processes_named_display():
+    col = MagicMock()
+    col.display.return_value = "TABLE"
+    named = MagicMock()
+    named.display.return_value = "TABLE"
+    root = MagicMock()
+    root.named.return_value = named
+    active = MagicMock()
+    active.processes.return_value = root
+    out = parse_input('processes.named("bluetooth").display()', _MiniState(active))
+    assert out == "TABLE"
+    root.named.assert_called_once_with("bluetooth")
+    named.display.assert_called_once()
+
+
+def test_parse_processes_named_default_summarize_and_display():
+    col = MagicMock()
+    col.summarize.return_value = "S"
+    col.display.return_value = "D"
+    root = MagicMock()
+    root.named.return_value = col
+    active = MagicMock()
+    active.processes.return_value = root
+    out = parse_input('processes.named("bluetooth")', _MiniState(active))
+    assert out == "S\n\nD"
+    root.named.assert_called_once_with("bluetooth")
+
+
 def test_apply_step_command_unknown():
     b = WorkflowBuilder("t")
     msg = apply_step_command(b, "nope")

@@ -18,6 +18,11 @@ DEFAULTS: dict[str, Any] = {
         "theme": "default",
         "accent": None,
         "show_progress": False,
+        "animate_banner": True,
+        "skip_animation_on_key": True,
+        "syntax_highlight": True,
+        "mascot": True,
+        "mascot_animate": True,
     },
     "workflow": {
         "executor": "sequential",

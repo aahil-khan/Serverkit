@@ -150,7 +150,7 @@ class _MenuUi:
         self._alt_screen = False
 
     def enter(self) -> None:
-        if not self.enabled:
+        if not (hasattr(sys.stdout, "isatty") and sys.stdout.isatty()):
             return
         sys.stdout.write("\033[?1049h")
         sys.stdout.flush()
@@ -276,8 +276,10 @@ class _MenuUi:
         return lines
 
     def _header_line(self) -> str:
-        tag = self._paint(self.accent, "[ ok ]")
-        return f"{_INDENT}{tag}{self._value(' Guided menu')}"
+        if self.enabled:
+            tag = self._paint(self.accent, "[ ok ]")
+            return f"{_INDENT}{tag}{self._value(' Guided menu')}"
+        return f"{_INDENT}[ ok ] Guided menu"
 
     def draw(
         self,
@@ -299,17 +301,16 @@ class _MenuUi:
         )
         command_changed = command != self._last_command
 
-        if not self.enabled:
-            box = "\n".join(self._command_box_lines(command))
-            print(f"  -- ServerKit Menu --\n{box}\n{body}")
-            self._last_command = command
-            return
-
         if self._alt_screen:
             sys.stdout.write("\033[H\033[2J")
             sys.stdout.write(self._header_line() + "\n\n")
+        elif not self._alt_screen:
+            box = "\n".join(self._command_box_lines(command))
+            print(f"{self._header_line()}\n{box}\n{body}")
+            self._last_command = command
+            return
 
-        if animate and command_changed:
+        if animate and command_changed and self.enabled:
             self._render_command_box_animated(command)
         else:
             sys.stdout.write("\n".join(self._command_box_lines(command)) + "\n")
@@ -347,9 +348,6 @@ class _MenuUi:
     ) -> MenuAction:
         if not nodes:
             return ("quit", None)
-
-        if not self.enabled:
-            return self._parse_typed_choice(self.prompt(session), len(nodes))
 
         selected = 0
         self.draw(
@@ -398,8 +396,9 @@ class _MenuUi:
                     return ("select", index)
 
     def prompt(self, session: PromptSession) -> str | None:
+        label = self._accent("menu> ") if self.enabled else "menu> "
         try:
-            return session.prompt(self._prompt_text(self._accent("menu> "))).strip().lower()
+            return session.prompt(self._prompt_text(label)).strip().lower()
         except (EOFError, KeyboardInterrupt):
             return None
 

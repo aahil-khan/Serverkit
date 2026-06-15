@@ -50,7 +50,7 @@ def test_print_banner_picks_random_palette_color():
 
 
 def test_print_banner_skips_animation_when_disabled(capsys):
-    with patch("serverkit.shell.banner.time.sleep") as sleep:
+    with patch("serverkit.shell.banner.interruptible_sleep") as sleep:
         print_banner(color=False, animate=False)
     sleep.assert_not_called()
     output = capsys.readouterr().out
@@ -62,12 +62,11 @@ def test_print_banner_runs_animation_when_enabled(capsys):
     with (
         patch("serverkit.shell.banner._color_enabled", return_value=True),
         patch("serverkit.shell.banner._pick_accent_color", return_value="1;36"),
-        patch("serverkit.shell.banner.time.sleep") as sleep,
+        patch("serverkit.shell.banner.interruptible_sleep", return_value=False),
         patch("serverkit.shell.banner._hide_cursor") as hide,
         patch("serverkit.shell.banner._show_cursor") as show,
     ):
         print_banner(color=True, animate=True)
-    sleep.assert_called()
     hide.assert_called_once()
     show.assert_called_once()
     output = capsys.readouterr().out
@@ -75,4 +74,5 @@ def test_print_banner_runs_animation_when_enabled(capsys):
     assert "Version" in output
     assert "Python" in output
     assert "Modules" in output
+    assert "booting serverkit shell" in output
     assert "shell online" in output

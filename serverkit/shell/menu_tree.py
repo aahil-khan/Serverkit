@@ -25,6 +25,15 @@ def _has_extra(module: str) -> bool:
     return importlib.util.find_spec(module) is not None
 
 
+def _docker_available(state: ReplState) -> bool:
+    """Local docker needs the docker-py extra; remote uses the host docker CLI."""
+    if not _has_method(state, "docker"):
+        return False
+    if state.remote is not None:
+        return True
+    return _has_extra("docker")
+
+
 def _default_log_path() -> str:
     if platform.system() == "Windows":
         return "C:\\Windows\\Temp\\app.log"
@@ -325,7 +334,7 @@ def root_categories() -> list[MenuCategory]:
         MenuCategory(
             "Docker",
             "Container inspection (requires docker extra)",
-            available=lambda s: _has_method(s, "docker"),
+            available=_docker_available,
             children=[
                 SetBase(
                     "Docker containers",
@@ -429,7 +438,7 @@ def node_available(node: AnyMenuNode, state: ReplState) -> bool:
             return False
         if node.template.startswith("services") and not _has_method(state, "services"):
             return False
-        if node.template.startswith("docker") and not _has_method(state, "docker"):
+        if node.template.startswith("docker") and not _docker_available(state):
             return False
     return True
 

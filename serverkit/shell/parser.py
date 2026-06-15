@@ -299,6 +299,12 @@ def _apply_log_chain(state: "ReplState", path: str, chain: str) -> str:
     return lf.summarize()
 
 
+def _ok(message: str, style: "ShellStyle | None") -> str:
+    if style and style.enabled:
+        return style.format_success(message)
+    return message
+
+
 def apply_step_command(builder: WorkflowBuilder, step: str) -> str | None:
     """Map a builder step line to WorkflowBuilder methods. Returns error message or None."""
     parts = shlex.split(step.strip())
@@ -343,29 +349,29 @@ def apply_step_command(builder: WorkflowBuilder, step: str) -> str | None:
 
 
 def run_workflow_builder(name: str, state: "ReplState") -> str:
-    print(f"Workflow builder: {name}")
-    print("Enter steps (see help). Type save when done, cancel to abort.")
-    print(
-        "Examples: processes | memory_above 500 | sort_by_memory | summarize\n"
-        "          logs /var/log/syslog | errors | tail 20 | summarize\n"
-        "          export /tmp/report.txt"
-    )
+    style = state.style
+    style.builder_header(name)
+    style.builder_examples()
     builder = state.server.workflow(name)
+    prompt = style.builder_prompt()
     while True:
         try:
-            raw = input("step> ").strip()
+            raw = input(prompt).strip()
         except EOFError:
             return "Cancelled (EOF)."
         if not raw:
             continue
         if raw == "save":
             builder.save()
-            return f"Workflow saved: {name}"
+            message = f"Workflow saved: {name}"
+            return style.format_success(message) if style.enabled else message
         if raw == "cancel":
             return "Cancelled."
         err = apply_step_command(builder, raw)
         if err:
-            print(err)
+            print(style.format_error(err) if style.enabled else err)
+            continue
+        style.builder_step_ok(raw)
 
 
 def _parse_connect_args(
@@ -443,14 +449,18 @@ def parse_input(
 
     if text == "catalog":
         names = WorkflowManager().list_catalog()
-        return "\n".join(names) if names else "(no catalog templates)"
+        body = "\n".join(names) if names else "(no catalog templates)"
+        if style and style.enabled and names:
+            header = f"{style.accent('Catalog templates')}\n"
+            return header + body
+        return body
 
     if text.startswith("import ") and not text.startswith("import_workflow"):
         name = text[len("import ") :].strip()
         if not name:
             return "Usage: import CATALOG_NAME"
         state.server.import_workflow(name)
-        return f"Imported catalog workflow {name!r} to ~/.serverkit/workflows/"
+        return _ok(f"Imported catalog workflow {name!r} to ~/.serverkit/workflows/", style)
 
     if text.startswith("run "):
         rest = shlex.split(text[len("run ") :])
@@ -517,40 +527,6 @@ def parse_input(
     if text == "memory.json":
         snap = state.active.memory()
         return json.dumps(snap.to_dict(), indent=2)
-
-    # --- PDF: processes ---
-    if text == "processes.all()":
-        procs = state.active.processes().all()
-        return format_processes(procs)
-
-    if text.startswith("processes.memory_above("):
-        n = extract_number(text)
-        procs = state.active.processes().memory_above(n).all()
-        return format_processes(procs)
-
-    if text.startswith("processes.cpu_above("):
-        n = extract_number(text)
-        procs = state.active.processes().cpu_above(n).all()
-        return format_processes(procs)
-
-    if text.startswith("processes.named("):
-        name = extract_string_arg(text, "processes.named")
-        if name is None:
-            return "Usage: processes.named(\"name\")"
-        procs = state.active.processes().named(name).all()
-        return format_processes(procs)
-
-    if text.startswith("processes.sort_by_memory()"):
-        col = state.active.processes().sort_by_memory()
-        if ".all()" in text:
-            return format_processes(col.all())
-        return col.summarize() + "\n\n" + col.display()
-
-    if text.startswith("processes.sort_by_cpu()"):
-        col = state.active.processes().sort_by_cpu()
-        if ".all()" in text:
-            return format_processes(col.all())
-        return col.summarize() + "\n\n" + col.display()
 
     # --- PDF: logs ---
     if "logs(" in text:

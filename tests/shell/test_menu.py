@@ -72,6 +72,22 @@ def test_filter_categories_hides_docker_without_method():
     assert "Docker" not in labels
 
 
+def test_filter_categories_hides_docker_without_extra():
+    state = ReplState(Server())
+    state.remote = None
+    with patch("serverkit.shell.menu_tree._has_extra", return_value=False):
+        labels = [cat.label for cat in filter_categories(state)]
+    assert "Docker" not in labels
+
+
+def test_filter_categories_shows_docker_on_remote_without_local_extra():
+    state = ReplState(Server())
+    state.remote = MagicMock(spec=["docker"])
+    with patch("serverkit.shell.menu_tree._has_extra", return_value=False):
+        labels = [cat.label for cat in filter_categories(state)]
+    assert "Docker" in labels
+
+
 def test_node_available_respects_wizard_available():
     wizard = WizardCommand("Import", "import {name}", available=lambda s: s.remote is None)
     local = ReplState(Server())
@@ -162,6 +178,41 @@ def test_run_interactive_menu_keyboard_navigation():
                         return_value="verbose",
                     ) as parse:
                         result = run_interactive_menu(state, session)
+
+    assert result == "verbose"
+    parse.assert_called_once_with("memory --verbose", state)
+
+
+def test_run_interactive_menu_no_color_uses_keyboard_navigation():
+    """NO_COLOR disables ANSI styling but keeps the full interactive menu."""
+    session = MagicMock()
+
+    from serverkit.shell.menu_tree import FixedCommand
+    from serverkit.shell.style import ShellStyle
+
+    categories = [
+        MenuCategory(
+            "Memory",
+            children=[
+                FixedCommand("Summary", "memory"),
+                FixedCommand("Details", "memory --verbose"),
+            ],
+        )
+    ]
+
+    style = ShellStyle(enabled=False)
+    state = ReplState(Server(), style=style)
+    with patch("serverkit.shell.menu.time.sleep"):
+        with patch(
+            "serverkit.shell.menu._read_nav_key",
+            side_effect=["enter", "down", "enter"],
+        ):
+            with patch("serverkit.shell.menu.filter_categories", return_value=categories):
+                with patch(
+                    "serverkit.shell.menu.parse_input",
+                    return_value="verbose",
+                ) as parse:
+                    result = run_interactive_menu(state, session)
 
     assert result == "verbose"
     parse.assert_called_once_with("memory --verbose", state)
