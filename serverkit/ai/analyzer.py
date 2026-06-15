@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import TYPE_CHECKING, Any
 
 from serverkit.ai.jsonutil import parse_model_json
@@ -12,6 +13,27 @@ from serverkit.workflows.workflow import Workflow
 if TYPE_CHECKING:
     from serverkit.logs.logfile import LogFile
     from serverkit.processes.manager import ProcessCollection
+
+
+def _extract_largest_files_path_and_limit(query: str) -> tuple[str, int] | None:
+    """Match ``largest files in|under|at PATH`` with optional ``limit N`` / ``top N``."""
+    ql = query.lower()
+    if "largest" not in ql or "files" not in ql:
+        return None
+    for pattern in (
+        r"largest\s+files\s+(?:in|under|at)\s+\"([^\"]+)\"",
+        r"largest\s+files\s+(?:in|under|at)\s+'([^']+)'",
+        r"largest\s+files\s+(?:in|under|at)\s+(/\S+)",
+    ):
+        m = re.search(pattern, query, re.IGNORECASE)
+        if m:
+            path = m.group(1).strip()
+            if not path:
+                return None
+            lm = re.search(r"(?:limit|top)\s+(\d+)\b", ql)
+            lim = int(lm.group(1)) if lm else 20
+            return path, max(1, min(lim, 500))
+    return None
 
 
 class Analyzer:
@@ -50,10 +72,13 @@ Rules:
 - At most 6 filters. Keep the object small.
 
 Schema:
-{{"resource": "processes" or "logs", "path": "<only if resource is logs>", "filters": [{{"action": "...", "value": ...}}]}}
+{{"resource": "processes" | "logs" | "disk" | "process_history", "path": "<only if resource is logs>", "delay_seconds": <optional number for process_history>, "filters": [{{"action": "...", "value": ..., "limit": <optional int>}}]}}
 
 Process actions: memory_above, cpu_above, named, sort_by_memory, sort_by_cpu
 Log actions: errors, warnings, contains, tail, summarize
+Disk partition actions: usage_above, mount_contains, sort_by_used (chain then summarize)
+Disk terminal action: largest_files with "value" = root path string, optional "limit" (number)
+process_history: empty filters or omit; optional delay_seconds between two snapshots (default 0)
 
 Examples:
 Query: show python processes using more than 1GB RAM
@@ -62,8 +87,17 @@ JSON: {{"resource": "processes", "filters": [{{"action": "named", "value": "pyth
 Query: list processes with cpu above 10 percent
 JSON: {{"resource": "processes", "filters": [{{"action": "cpu_above", "value": 10}}]}}
 
+Query: show disk partitions above 80 percent
+JSON: {{"resource": "disk", "filters": [{{"action": "usage_above", "value": 80}}]}}
+
+Query: largest files in /var/log limit 10
+JSON: {{"resource": "disk", "filters": [{{"action": "largest_files", "value": "/var/log", "limit": 10}}]}}
+
+Query: what processes changed in the last second
+JSON: {{"resource": "process_history", "delay_seconds": 1, "filters": []}}
+
 Query: {query}
-Output JSON on one line only, max 220 characters, no markdown fences.
+Output JSON on one line only, max 320 characters, no markdown fences.
 JSON:"""
 
     def _try_deterministic_intent(self, query: str) -> str | None:
@@ -102,6 +136,42 @@ JSON:"""
                     "filters": [{"action": "named", "value": m.group(1)}],
                 }
             )
+        if (
+            "process history" in q
+            or re.search(r"\bdiff\s+processes\b", q)
+            or re.search(r"processes?\s+that\s+(?:appeared|disappeared)\b", q)
+            or re.search(r"what\s+process(?:es)?\s+changed\b", q)
+        ):
+            delay = 0.0
+            dm = re.search(
+                r"(?:after|wait)\s+(\d+(?:\.\d+)?)\s*(?:s(?:ec(?:ond)?s?)?)?\b",
+                q,
+            )
+            if dm:
+                delay = float(dm.group(1))
+            return self._run_action(
+                {"resource": "process_history", "delay_seconds": delay, "filters": []}
+            )
+        m = re.search(
+            r"(?:disks?|disk\s+usage|partitions?)\s+(?:usage\s+)?(?:above|over|>|greater\s+than)\s*(\d+(?:\.\d+)?)\s*(?:%|percent)?\b",
+            q,
+        )
+        if m:
+            return self._run_action(
+                {
+                    "resource": "disk",
+                    "filters": [{"action": "usage_above", "value": float(m.group(1))}],
+                }
+            )
+        path_lim = _extract_largest_files_path_and_limit(query)
+        if path_lim is not None:
+            root, lim = path_lim
+            return self._run_action(
+                {
+                    "resource": "disk",
+                    "filters": [{"action": "largest_files", "value": root, "limit": lim}],
+                }
+            )
         return None
 
     def _execute_intent(self, query: str) -> str:
@@ -112,7 +182,7 @@ JSON:"""
         raw = self._ollama.ask(
             prompt,
             temperature=0.05,
-            num_predict=220,
+            num_predict=360,
             stop=["```", "\n\nThe ", "\n\n## "],
         )
         action = parse_model_json(raw)
@@ -163,6 +233,17 @@ JSON:"""
 
     def _run_action(self, action: dict[str, Any]) -> str:
         resource = action.get("resource")
+        if resource == "process_history":
+            delay = action.get("delay_seconds")
+            if delay is None:
+                delay = action.get("delay")
+            try:
+                delay_f = float(delay) if delay is not None else 0.0
+            except (TypeError, ValueError):
+                delay_f = 0.0
+            return self._run_process_history(delay_f)
+        if resource == "disk":
+            return self._run_disk_action(action)
         if resource == "processes":
             collection: ProcessCollection = self.server.processes()
             for f in self._normalized_filters(action.get("filters")):
@@ -177,6 +258,48 @@ JSON:"""
                 log = self._apply_log_filter(log, f)
             return log.summarize()
         return f"Unsupported resource: {resource!r}"
+
+    def _run_process_history(self, delay_seconds: float) -> str:
+        from serverkit.processes.history import ProcessHistory
+
+        before = list(self.server.processes().all())
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+        after = list(self.server.processes().all())
+        diff = ProcessHistory.diff(before, after)
+        return ProcessHistory.format_diff(diff)
+
+    def _run_disk_action(self, action: dict[str, Any]) -> str:
+        from serverkit.disk.manager import DiskCollection
+
+        coll: DiskCollection = self.server.disk()
+        filters = self._normalized_filters(action.get("filters"))
+        for f in filters:
+            act = f.get("action")
+            if act == "largest_files":
+                path = str(f.get("value") or "")
+                if not path:
+                    return "largest_files filter requires string path in 'value'."
+                try:
+                    lim = int(f.get("limit") or 20)
+                except (TypeError, ValueError):
+                    lim = 20
+                lim = max(1, min(lim, 500))
+                return coll.largest_files(path, limit=lim).summarize()
+            coll = self._apply_disk_filter(coll, f)
+        return coll.summarize()
+
+    @staticmethod
+    def _apply_disk_filter(coll: Any, f: dict[str, Any]) -> Any:
+        act = f.get("action")
+        val = f.get("value")
+        if act == "usage_above":
+            return coll.usage_above(float(val))
+        if act == "mount_contains":
+            return coll.mount_contains(str(val))
+        if act == "sort_by_used":
+            return coll.sort_by_used()
+        return coll
 
     @staticmethod
     def _normalized_filters(filters: Any) -> list[dict[str, Any]]:
