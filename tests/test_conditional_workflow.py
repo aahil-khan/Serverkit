@@ -14,5 +14,5 @@ def test_conditional_skips_next_step(capsys):
 
     SequentialExecutor().execute(wf, StubServer())
     out = capsys.readouterr().out
-    assert "Skipping" in out
+    assert "[skip]" in out
     assert "SummaryStep" in out

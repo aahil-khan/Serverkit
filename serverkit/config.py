@@ -16,7 +16,13 @@ DEFAULTS: dict[str, Any] = {
     "output": {
         "use_rich": True,
         "theme": "default",
+        "accent": None,
         "show_progress": False,
+        "animate_banner": True,
+        "skip_animation_on_key": True,
+        "syntax_highlight": True,
+        "mascot": False,
+        "mascot_animate": True,
     },
     "workflow": {
         "executor": "sequential",

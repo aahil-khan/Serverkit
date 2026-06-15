@@ -1,4 +1,4 @@
-"""CLI progress indicator for long operations (ASCII spinner, not Rich bars)."""
+"""CLI progress indicator for long operations."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from typing import Iterable, Iterator, TypeVar
 
 T = TypeVar("T")
 
-# Traditional rotating indicator: / -> - -> \
-SPINNER_FRAMES = ("/", "-", "\\", "|")
+SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+PLAIN_FRAMES = ("/", "-", "\\", "|")
 
 
 def track_iterable(
@@ -20,20 +20,28 @@ def track_iterable(
     *,
     enabled: bool = True,
 ) -> Iterator[T]:
-    """Yield items while showing a simple stderr spinner (no Rich progress bar)."""
+    """Yield items while showing a stderr spinner."""
     if not enabled:
         yield from items
         return
 
-    spin = itertools.cycle(SPINNER_FRAMES)
+    from serverkit.shell.style import get_active_style
+
+    style = get_active_style()
+    frames = SPINNER_FRAMES if style.enabled else PLAIN_FRAMES
+    spin = itertools.cycle(frames)
     stop = threading.Event()
 
     def _draw() -> None:
         while not stop.is_set():
             frame = next(spin)
-            sys.stderr.write(f"\r{description} {frame} ")
+            if style.enabled:
+                prefix = f"{style.dim(description)} {style.accent(frame)} "
+            else:
+                prefix = f"{description} {frame} "
+            sys.stderr.write(f"\r{prefix}")
             sys.stderr.flush()
-            time.sleep(0.12)
+            time.sleep(0.1)
 
     thread = threading.Thread(target=_draw, daemon=True)
     thread.start()
