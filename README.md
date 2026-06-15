@@ -4,7 +4,7 @@
 
 Inspect processes, logs, disk, services, and more through chainable objects and saved workflows — instead of memorizing `ps`, `grep`, and one-off shell pipelines. Run commands interactively in the REPL, automate in scripts, or ask questions in plain English with local Ollama.
 
-**Version 0.3.2** · Python **3.10+** · Linux
+**Version 0.3.3** · Python **3.10+** · Linux
 
 ```bash
 pip install "serverkit[rich]"
@@ -57,7 +57,7 @@ After install, launch the shell:
 serverkit
 ```
 
-Config lives at `~/.serverkit/config.json` (output theme, Ollama model, SSH defaults, workflow settings).
+Config is created automatically at `~/.serverkit/config.json` on first use (commented template — edit values or uncomment optional lines).
 
 ---
 

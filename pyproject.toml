@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "serverkit"
-version = "0.3.2"
+version = "0.3.3"
 description = "Fluent Python SDK and shell for Linux server operations"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -66,6 +66,7 @@ include = ["serverkit*"]
 
 [tool.setuptools.package-data]
 "serverkit.workflows.catalog" = ["*.json"]
+"serverkit" = ["config.template.jsonc"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

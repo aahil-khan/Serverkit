@@ -1,0 +1,58 @@
+{
+  // ServerKit — ~/.serverkit/config.json
+  // Lines starting with // are ignored. Uncomment optional blocks to enable them.
+
+  "output": {
+    // Rich tables for .display() and the REPL (requires serverkit[rich])
+    "use_rich": true,
+
+    // Shell theme: default | cyan | green | magenta | yellow | blue | red
+    // "default" picks a random accent each session
+    "theme": "default",
+
+    // ANSI accent override (e.g. "1;36"), or null to use theme / random default
+    "accent": null,
+
+    // Progress spinner during slow operations
+    "show_progress": false,
+
+    // Animated banner when the REPL starts
+    "animate_banner": true,
+
+    // Press any key to skip the banner animation
+    "skip_animation_on_key": true,
+
+    "syntax_highlight": true,
+
+    // Optional REPL mascot
+    "mascot": false,
+    "mascot_animate": true
+  },
+
+  "workflow": {
+    // sequential | parallel (parallel runs sequential with a deprecation warning)
+    "executor": "sequential",
+
+    // Save timestamped copies under ~/.serverkit/workflows/{name}/versions/
+    "versioning": true
+  },
+
+  "ollama": {
+    // Model for ask / Server.ask() (requires serverkit[ai] and Ollama running)
+    "model": "phi3:mini"
+    // Other models — uncomment one and comment out the line above:
+    // "model": "llama3.2"
+    // "model": "mistral"
+  },
+
+  "remote": {
+    // Defaults for Server.connect() and REPL connect (requires serverkit[remote])
+    "default_user": null,
+    "key_path": null,
+    "port": 22
+    // Examples — uncomment as needed:
+    // "default_user": "deploy",
+    // "key_path": "~/.ssh/id_ed25519",
+    // "port": 22
+  }
+}
