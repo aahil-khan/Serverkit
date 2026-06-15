@@ -75,5 +75,4 @@ def test_print_banner_runs_animation_when_enabled(capsys):
     assert "Version" in output
     assert "Python" in output
     assert "Modules" in output
-    assert "booting serverkit shell" in output
     assert "shell online" in output

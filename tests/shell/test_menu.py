@@ -135,7 +135,6 @@ def test_run_interactive_menu_builds_chain_and_executes():
 
 
 def test_run_interactive_menu_keyboard_navigation():
-    state = ReplState(Server())
     session = MagicMock()
 
     from serverkit.shell.menu_tree import FixedCommand
@@ -150,13 +149,19 @@ def test_run_interactive_menu_keyboard_navigation():
         )
     ]
 
-    with patch("serverkit.shell.menu._banner._color_enabled", return_value=True):
-        with patch("serverkit.shell.menu._banner._pick_accent_color", return_value="1;36"):
-            with patch("serverkit.shell.menu.time.sleep"):
-                with patch("serverkit.shell.menu._read_nav_key", side_effect=["enter", "down", "enter"]):
-                    with patch("serverkit.shell.menu.filter_categories", return_value=categories):
-                        with patch("serverkit.shell.menu.parse_input", return_value="verbose") as parse:
-                            result = run_interactive_menu(state, session)
+    with patch("serverkit.shell.style.color_enabled", return_value=True):
+        state = ReplState(Server())
+        with patch("serverkit.shell.menu.time.sleep"):
+            with patch(
+                "serverkit.shell.menu._read_nav_key",
+                side_effect=["enter", "down", "enter"],
+            ):
+                with patch("serverkit.shell.menu.filter_categories", return_value=categories):
+                    with patch(
+                        "serverkit.shell.menu.parse_input",
+                        return_value="verbose",
+                    ) as parse:
+                        result = run_interactive_menu(state, session)
 
     assert result == "verbose"
     parse.assert_called_once_with("memory --verbose", state)

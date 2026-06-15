@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from serverkit.shell import banner as _banner
+from serverkit.shell import style as shell_style
 from serverkit.shell.menu_tree import (
     AnyMenuNode,
     ChainStep,
@@ -32,7 +32,7 @@ try:
 except ImportError:  # pragma: no cover
     ANSI = None  # type: ignore[misc, assignment]
 
-_INDENT = "  "
+_INDENT = shell_style.INDENT
 _BOX_WIDTH = 54
 _CMD_CHAR_DELAY = 0.007
 _CMD_SWEEP_DELAY = 0.004
@@ -142,9 +142,10 @@ def _read_nav_key() -> str | None:
 class _MenuUi:
     """Terminal styling aligned with the startup banner."""
 
-    def __init__(self) -> None:
-        self.enabled = _banner._color_enabled()
-        self.accent = _banner._pick_accent_color() if self.enabled else "1;36"
+    def __init__(self, style: shell_style.ShellStyle | None = None) -> None:
+        self._style = style or shell_style.ShellStyle()
+        self.enabled = self._style.enabled
+        self.accent = self._style.accent_code
         self._last_command = ""
         self._alt_screen = False
 
@@ -163,16 +164,16 @@ class _MenuUi:
         self._alt_screen = False
 
     def _paint(self, code: str, text: str) -> str:
-        return _banner._paint(code, text, enabled=self.enabled)
+        return self._style.paint(code, text)
 
     def _accent(self, text: str) -> str:
-        return _banner._accent(text, accent=self.accent, enabled=self.enabled)
+        return self._style.accent(text)
 
     def _value(self, text: str) -> str:
-        return _banner._value(text, enabled=self.enabled)
+        return self._style.value(text)
 
     def _dim(self, text: str) -> str:
-        return _banner._dim(text, enabled=self.enabled)
+        return self._style.dim(text)
 
     def _command_box_lines(self, command: str) -> list[str]:
         inner_w = _BOX_WIDTH - 4
@@ -184,7 +185,7 @@ class _MenuUi:
         cmd_line = f"{_INDENT}│ {_pad_line(display, inner_w)} │"
         bottom = f"{_INDENT}╰{'─' * (_BOX_WIDTH - 2)}╯"
         if self.enabled:
-            label_line = f"{_INDENT}│ {label}{_banner._RESET}{' ' * max(0, inner_w - len('▶ COMMAND'))} │"
+            label_line = f"{_INDENT}│ {label}{shell_style.RESET}{' ' * max(0, inner_w - len('▶ COMMAND'))} │"
             if command:
                 cmd_line = f"{_INDENT}│ {self._accent(display)}{' ' * max(0, inner_w - len(display))} │"
             else:
@@ -205,7 +206,7 @@ class _MenuUi:
 
         top = f"{_INDENT}╭{'─' * (_BOX_WIDTH - 2)}╮"
         label = self._accent("▶ COMMAND")
-        label_line = f"{_INDENT}│ {label}{_banner._RESET}{' ' * max(0, inner_w - len('▶ COMMAND'))} │"
+        label_line = f"{_INDENT}│ {label}{shell_style.RESET}{' ' * max(0, inner_w - len('▶ COMMAND'))} │"
         bottom = f"{_INDENT}╰{'─' * (_BOX_WIDTH - 2)}╯"
 
         sys.stdout.write(f"{top}\n{label_line}\n")
@@ -214,7 +215,7 @@ class _MenuUi:
         built = base
         for index, char in enumerate(added):
             built += char
-            color = _banner._LOGO_PALETTE[index % len(_banner._LOGO_PALETTE)]
+            color = shell_style.LOGO_PALETTE[index % len(shell_style.LOGO_PALETTE)]
             shown = _fit(built, inner_w)
             line = f"{_INDENT}│ {self._paint(color, shown)}{' ' * max(0, inner_w - len(shown))} │"
             sys.stdout.write(f"\033[1A\r\033[2K{line}\n")
@@ -412,9 +413,7 @@ class _MenuUi:
 
     def echo_executed(self, command: str) -> None:
         """Print the command that ran, on the main screen after the menu closes."""
-        arrow = self._accent("▸ ")
-        cmd = self._value(command)
-        print(f"\n{_INDENT}{arrow}{cmd}\n")
+        self._style.echo_command(command)
 
 
 def prompt_args(
@@ -473,7 +472,7 @@ def _resolve_wizard(
 
 def run_interactive_menu(state: ReplState, session: PromptSession) -> str | None:
     """Run the guided menu until the user executes a command or quits."""
-    ui = _MenuUi()
+    ui = _MenuUi(state.style)
     ui.enter()
     stack: list[_NavFrame] = [
         _NavFrame("Categories", list(filter_categories(state)), "")

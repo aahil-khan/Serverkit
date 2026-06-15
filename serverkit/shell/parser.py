@@ -21,11 +21,11 @@ from serverkit.workflows.manager import WorkflowManager
 
 if TYPE_CHECKING:
     from serverkit.shell.state import ReplState
+    from serverkit.shell.style import ShellStyle
 
 HELP_TEXT = """\
 --------------------------------------------------------------------------------
   ServerKit shell — command reference
-  Further detail: docs/DEV2_CONTRACTS.md
 --------------------------------------------------------------------------------
 
   Shell
@@ -117,6 +117,43 @@ HELP_TEXT = """\
 
   Tab completion lists common SDK strings.
 """
+
+
+def build_help_text(style: "ShellStyle | None" = None) -> str:
+    """Return help text, styled when a ShellStyle with color is provided."""
+    from serverkit.shell.style import ShellStyle
+
+    if style is None or not style.enabled:
+        return HELP_TEXT
+
+    body: list[str] = []
+    lines = HELP_TEXT.splitlines()
+    index = 0
+    while index < len(lines) and (
+        lines[index].startswith("-")
+        or "command reference" in lines[index]
+        or lines[index].startswith("Further")
+    ):
+        index += 1
+
+    while index < len(lines):
+        line = lines[index]
+        next_line = lines[index + 1] if index + 1 < len(lines) else ""
+        if (
+            line.startswith("  ")
+            and line.strip()
+            and next_line.strip().replace("-", "") == ""
+            and len(next_line.strip()) > 3
+        ):
+            title = line.strip()
+            body.append(f"  {style.accent(title)}")
+            body.append(f"  {style.dim('─' * min(48, max(len(title), 20)))}")
+            index += 2
+            continue
+        body.append(line)
+        index += 1
+
+    return style.help_header() + "\n".join(body)
 
 
 def extract_number(text: str) -> float:
@@ -372,7 +409,12 @@ def _parse_connect_args(
     return host, user, key_path, port, password, timeout, allow_agent, look_for_keys
 
 
-def parse_input(text: str, state: "ReplState") -> str | None:
+def parse_input(
+    text: str,
+    state: "ReplState",
+    *,
+    style: "ShellStyle | None" = None,
+) -> str | None:
     """Translate one line of shell input into a string to print, or None."""
     text = text.strip()
     if not text:
@@ -380,7 +422,7 @@ def parse_input(text: str, state: "ReplState") -> str | None:
 
     # --- Meta / contracts (DEV2_CONTRACTS) ---
     if text == "help":
-        return HELP_TEXT
+        return build_help_text(style)
 
     if text.lower() in ("clr", "clear"):
         os.system("cls" if os.name == "nt" else "clear")
@@ -447,7 +489,10 @@ def parse_input(text: str, state: "ReplState") -> str | None:
                 allow_agent=allow_agent,
                 look_for_keys=look_for_keys,
             )
-            return f"Connected to {host!r} as {state.remote.user!r} (remote is active)."
+            message = f"Connected to {host!r} as {state.remote.user!r} (remote is active)."
+            if style and style.enabled:
+                return style.format_success(message)
+            return message
         except OptionalDependencyError as exc:
             return f"{exc}\nInstall with: pip install serverkit[remote]"
         except RemoteConnectionError as exc:
@@ -460,7 +505,10 @@ def parse_input(text: str, state: "ReplState") -> str | None:
             return "Not connected."
         host = getattr(state.remote, "host", "remote")
         state.close_remote()
-        return f"Disconnected from {host!r}. Using local server."
+        message = f"Disconnected from {host!r}. Using local server."
+        if style and style.enabled:
+            return style.format_success(message)
+        return message
 
     if text == "memory":
         snap = state.active.memory()
@@ -558,7 +606,12 @@ def _format_workflow_result(result: dict) -> str:
     return "\n".join(lines) if lines else repr(result)
 
 
-def format_user_error(exc: BaseException) -> str:
-    if isinstance(exc, ServerKitError):
-        return str(exc)
-    return f"Error: {exc}"
+def format_user_error(
+    exc: BaseException,
+    *,
+    style: "ShellStyle | None" = None,
+) -> str:
+    message = str(exc) if isinstance(exc, ServerKitError) else f"Error: {exc}"
+    if style is not None:
+        return style.format_error(message.removeprefix("Error: "))
+    return message if isinstance(exc, ServerKitError) else f"Error: {exc}"

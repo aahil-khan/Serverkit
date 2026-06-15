@@ -16,6 +16,7 @@ DEFAULTS: dict[str, Any] = {
     "output": {
         "use_rich": True,
         "theme": "default",
+        "accent": None,
         "show_progress": False,
     },
     "workflow": {

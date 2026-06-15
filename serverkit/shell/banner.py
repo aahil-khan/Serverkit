@@ -3,35 +3,24 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 import platform
 import random
 import sys
 import time
 
 from serverkit import __version__
+from serverkit.shell.style import (
+    INDENT as _INDENT,
+    LOGO_PALETTE as _LOGO_PALETTE,
+    RESET as _RESET,
+    ShellStyle,
+    color_enabled as _color_enabled,
+    paint as _paint,
+    pick_accent_color as _pick_accent_color,
+)
 
 _INNER_WIDTH = 27
-_INDENT = "  "
 _TITLE = "S E R V E R K I T"
-
-_RESET = "\033[0m"
-_VALUE_COLOR = "37"
-_DIM_COLOR = "2"
-_LOGO_PALETTE = (
-    "1;31",
-    "1;32",
-    "1;33",
-    "1;34",
-    "1;35",
-    "1;36",
-    "91",
-    "92",
-    "93",
-    "94",
-    "95",
-    "96",
-)
 _SCRAMBLE_CHARS = "▓░█▄▀■□▪▫@#$%&*?0123456789"
 _BOOT_STEPS = (
     "booting serverkit shell",
@@ -70,32 +59,16 @@ _LOGO = _build_logo()
 _TITLE_LINE = _LOGO[2]
 
 
-def _color_enabled() -> bool:
-    if os.environ.get("NO_COLOR"):
-        return False
-    return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
-
-
-def _pick_accent_color() -> str:
-    return random.choice(_LOGO_PALETTE)
-
-
-def _paint(code: str, text: str, *, enabled: bool) -> str:
-    if not enabled:
-        return text
-    return f"\033[{code}m{text}{_RESET}"
-
-
 def _accent(text: str, *, accent: str, enabled: bool) -> str:
     return _paint(accent, text, enabled=enabled)
 
 
 def _value(text: str, *, enabled: bool) -> str:
-    return _paint(_VALUE_COLOR, text, enabled=enabled)
+    return _paint("37", text, enabled=enabled)
 
 
 def _dim(text: str, *, enabled: bool) -> str:
-    return _paint(_DIM_COLOR, text, enabled=enabled)
+    return _paint("2", text, enabled=enabled)
 
 
 def _info_line(label: str, value: str, *, accent: str, enabled: bool) -> str:
@@ -410,11 +383,20 @@ def _print_animated(*, accent: str, enabled: bool) -> None:
     _animate_info(accent=accent, enabled=enabled)
 
 
-def print_banner(*, color: bool | None = None, animate: bool | None = None) -> None:
+def print_banner(
+    *,
+    color: bool | None = None,
+    animate: bool | None = None,
+    style: ShellStyle | None = None,
+) -> None:
     """Print the startup banner."""
-    enabled = _color_enabled() if color is None else color
+    if style is not None:
+        enabled = style.enabled if color is None else color
+        accent = style.accent_code
+    else:
+        enabled = _color_enabled() if color is None else color
+        accent = _pick_accent_color() if enabled else "1;36"
     should_animate = animate if animate is not None else enabled
-    accent = _pick_accent_color() if enabled else "1;36"
 
     if should_animate and enabled:
         _print_animated(accent=accent, enabled=enabled)
