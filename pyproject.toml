@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "serverkit"
 version = "0.3.1"
-description = "OOP Linux operations SDK with workflows"
+description = "Fluent Python SDK and shell for Linux server operations"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
