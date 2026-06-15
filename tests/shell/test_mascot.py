@@ -15,6 +15,12 @@ from serverkit.shell.mascot import (
 from serverkit.shell.style import ShellStyle
 
 
+def test_mascot_disabled_by_default():
+    style = ShellStyle(accent="1;36", enabled=True)
+    mascot = ShellMascot.from_style(style)
+    assert mascot.active is False
+
+
 def test_mascot_disabled_when_config_off():
     style = ShellStyle(accent="1;36", enabled=True)
     style.ui["mascot"] = False

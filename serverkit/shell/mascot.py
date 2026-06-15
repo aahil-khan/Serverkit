@@ -124,7 +124,7 @@ class ShellMascot:
     @classmethod
     def from_style(cls, style: ShellStyle) -> ShellMascot:
         return cls(
-            enabled=bool(style.ui.get("mascot", True)),
+            enabled=bool(style.ui.get("mascot", False)),
             style=style,
             animate=bool(style.ui.get("mascot_animate", True)),
         )

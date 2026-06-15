@@ -21,7 +21,7 @@ DEFAULTS: dict[str, Any] = {
         "animate_banner": True,
         "skip_animation_on_key": True,
         "syntax_highlight": True,
-        "mascot": True,
+        "mascot": False,
         "mascot_animate": True,
     },
     "workflow": {

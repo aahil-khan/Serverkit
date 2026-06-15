@@ -81,7 +81,7 @@ def load_ui_flags() -> dict[str, bool]:
             cfg.get("output", "skip_animation_on_key", default=True)
         ),
         "syntax_highlight": bool(cfg.get("output", "syntax_highlight", default=True)),
-        "mascot": bool(cfg.get("output", "mascot", default=True)),
+        "mascot": bool(cfg.get("output", "mascot", default=False)),
         "mascot_animate": bool(cfg.get("output", "mascot_animate", default=True)),
     }
 
