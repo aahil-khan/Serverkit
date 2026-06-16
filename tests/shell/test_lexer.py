@@ -25,6 +25,15 @@ def test_lexer_empty_line():
     assert get_line(0) == [("", "")]
 
 
+def test_lexer_styles_trailing_comment():
+    document = Document("processes.all()  # show all")
+    get_line = ServerKitLexer().lex_document(document)
+    fragments = get_line(0)
+    joined = "".join(text for _, text in fragments)
+    assert joined == document.text
+    assert any(style == "class:comment" for style, _ in fragments)
+
+
 def test_lexer_prompt_session_render():
     from prompt_toolkit import PromptSession
     from prompt_toolkit.styles import Style

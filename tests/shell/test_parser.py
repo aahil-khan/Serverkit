@@ -14,7 +14,9 @@ from serverkit.shell.parser import (
     extract_number,
     extract_string_arg,
     format_processes,
+    normalize_repl_line,
     parse_input,
+    strip_shell_comment,
 )
 from serverkit.workflows.builder import WorkflowBuilder
 
@@ -58,6 +60,27 @@ def test_parse_help():
     active = MagicMock()
     out = parse_input("help", _MiniState(active))
     assert "processes.all()" in out
+
+
+def test_strip_shell_comment():
+    assert strip_shell_comment("processes.all()  # show all") == "processes.all()"
+    assert strip_shell_comment("# only a comment") == ""
+    assert strip_shell_comment('logs("path#hash.log").errors()') == 'logs("path#hash.log").errors()'
+    assert strip_shell_comment("exit  # goodbye") == "exit"
+
+
+def test_normalize_repl_line():
+    assert normalize_repl_line("  help  # docs  ") == "help"
+    assert normalize_repl_line("> > ask hello there") == "ask hello there"
+    assert normalize_repl_line("# noop") == ""
+
+
+def test_parse_input_ignores_comments():
+    active = MagicMock()
+    active.processes.side_effect = _fake_processes
+    out = parse_input("processes.all()  # list everything", _MiniState(active))
+    assert "python" in out
+    assert parse_input("# just a comment", _MiniState(active)) is None
 
 
 def test_parse_clr_clear_invokes_os_system(monkeypatch):

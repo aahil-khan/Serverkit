@@ -34,6 +34,40 @@ def _strip_leading_gt_prompts(line: str) -> str:
     return s
 
 
+def strip_shell_comment(line: str) -> str:
+    """Remove trailing ``#`` comments outside single- or double-quoted strings."""
+    out: list[str] = []
+    in_q = False
+    q = ""
+    escape = False
+    for ch in line:
+        if escape:
+            out.append(ch)
+            escape = False
+            continue
+        if in_q:
+            out.append(ch)
+            if ch == "\\":
+                escape = True
+            elif ch == q:
+                in_q = False
+            continue
+        if ch in "\"'":
+            in_q = True
+            q = ch
+            out.append(ch)
+            continue
+        if ch == "#":
+            break
+        out.append(ch)
+    return "".join(out).rstrip()
+
+
+def normalize_repl_line(text: str) -> str:
+    """Normalize one REPL line: transcript prompts, shell comments, outer whitespace."""
+    return strip_shell_comment(_strip_leading_gt_prompts(text)).strip()
+
+
 def _handle_ask_log_file_not_found(query: str, exc: LogFileNotFound, state: "ReplState") -> str:
     """When ``ask`` fails because a log path is missing, avoid leaking raw errors for soft queries."""
     from serverkit.ai.analyzer import (
@@ -72,6 +106,7 @@ HELP_TEXT = """\
   menu                          Interactive guided command builder
   clr | clear                   Clear the terminal (Windows: cls, Unix: clear)
   exit                          Leave the shell
+  # comment                     End-of-line comments (ignored outside quotes)
 
   Processes (classic forms; active target = local or remote after connect)
   ---------------------------------------------------------------------------
@@ -461,7 +496,7 @@ def parse_input(
     style: "ShellStyle | None" = None,
 ) -> str | None:
     """Translate one line of shell input into a string to print, or None."""
-    text = _strip_leading_gt_prompts(text)
+    text = normalize_repl_line(text)
     if not text:
         return None
 

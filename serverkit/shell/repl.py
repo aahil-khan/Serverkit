@@ -11,7 +11,7 @@ from serverkit.shell.banner import print_banner
 from serverkit.shell.lexer import ServerKitLexer
 from serverkit.shell.mascot import ShellMascot
 from serverkit.shell.menu import run_interactive_menu
-from serverkit.shell.parser import format_user_error, parse_input
+from serverkit.shell.parser import format_user_error, normalize_repl_line, parse_input
 from serverkit.shell.state import ReplState
 from serverkit.shell.style import ShellStyle, set_active_style
 
@@ -26,6 +26,7 @@ _PROMPT_STYLE = Style.from_dict(
         "number": "ansiyellow",
         "keyword": "ansibrightmagenta bold",
         "method": "ansicyan",
+        "comment": "ansibrightblack italic",
     }
 )
 
@@ -67,12 +68,12 @@ def run_shell() -> None:
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
-            if not text.strip():
+            line = normalize_repl_line(text)
+            if not line:
                 continue
-            stripped = text.strip()
-            if stripped in ("exit", "quit"):
+            if line in ("exit", "quit"):
                 break
-            if stripped == "menu":
+            if line == "menu":
                 try:
                     result = run_interactive_menu(state, session)
                     if result is not None:
@@ -85,15 +86,15 @@ def run_shell() -> None:
                     _mascot_after("menu", outcome="err")
                 continue
             try:
-                result = parse_input(text, state, style=style)
+                result = parse_input(line, state, style=style)
                 if result is not None:
                     print(style.format_shell_output(result))
                     print()
-                _mascot_after(stripped, result=result)
+                _mascot_after(line, result=result)
             except Exception as exc:  # noqa: BLE001 — user-facing REPL
                 print(format_user_error(exc, style=style))
                 print()
-                _mascot_after(stripped, outcome="err")
+                _mascot_after(line, outcome="err")
     finally:
         state.close_remote()
         style.farewell()

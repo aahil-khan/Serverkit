@@ -1,153 +1,169 @@
 # ServerKit
 
-**A fluent Python SDK and shell for Linux server operations.**
+**A Python design exercise: Linux server resources as fluent, chainable objects.**
 
-Inspect processes, logs, disk, services, and more through chainable objects and saved workflows — instead of memorizing `ps`, `grep`, and one-off shell pipelines. Run commands interactively in the REPL, automate in scripts, or ask questions in plain English with local Ollama.
+ServerKit wraps host inspection (processes, memory, logs, disk, services, …) behind a `Server` facade, collection filters, and persisted workflows. It ships as a library and a small REPL — not as a production orchestration tool.
 
-**Version 0.3.6** · Python **3.10+** · Linux
-
-```bash
-pip install "serverkit[rich]"
-```
-
-[`serverkit` on PyPI](https://pypi.org/project/serverkit/) · [User guide](docs/USER_GUIDE.md) · [Examples](examples/)
-
----
-
-## Why ServerKit
-
-| Instead of… | ServerKit gives you… |
-|-------------|----------------------|
-| `ps aux \| awk … \| grep …` | `server.processes().memory_above(500).sort_by_memory().summarize()` |
-| Ad-hoc audit scripts you rewrite every time | Named workflows in `~/.serverkit/workflows/`, importable from a built-in catalog |
-| SSH + shell one-liners per host | `Server.connect("host")` with the same API locally and remotely |
-| Piping logs through `grep` and `tail` | `server.logs("app.log").errors().match(r"timeout").summarize()` |
-
-Filters run eagerly; `.summarize()`, `.display()`, and `.all()` are terminal — you always know when work is done.
-
----
-
-## Install
-
-**Recommended** (SDK + interactive shell + formatted tables):
+[![PyPI](https://img.shields.io/pypi/v/serverkit)](https://pypi.org/project/serverkit/)
+[![Python](https://img.shields.io/pypi/pyversions/serverkit)](https://pypi.org/project/serverkit/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ```bash
 pip install "serverkit[rich]"
+serverkit --version
 ```
 
-**Everything** (SSH remote, Docker, AI, Rich):
-
-```bash
-pip install "serverkit[all]"
-```
-
-| Extra | Adds |
-|-------|------|
-| `[rich]` | Formatted tables for `.display()` and the REPL |
-| `[remote]` | `Server.connect()` / REPL `connect` over SSH |
-| `[docker]` | Container listing, logs, and stats |
-| `[ai]` | `Server.ask()` and REPL `ask …` via Ollama |
-| `[dev]` | pytest and test dependencies |
-
-Core install (`pip install serverkit`) includes the SDK and REPL with plain-text `.summarize()` output. For the full interactive experience, use at least `[rich]`.
-
-After install, launch the shell:
-
-```bash
-serverkit
-```
-
-Config is created automatically at `~/.serverkit/config.json` on first use (commented template — edit values or uncomment optional lines).
+**Docs:** [User guide](docs/USER_GUIDE.md) · [Examples](examples/) · [PyPI](https://pypi.org/project/serverkit/)
 
 ---
 
-## Quick start
+## Why we Built This
 
-### Python SDK
+We wanted to practice **object-oriented API design** on a real domain: Linux server operations.
+
+Most admin work is expressed as shell pipelines and one-off scripts. ServerKit asks a different question: *what if processes, logs, and memory were typed collections with fluent filters and explicit terminal methods?*
+
+**Goals**
+
+- Model host resources as **composable objects**, not string commands
+- Keep **local and remote** behind the same facade (`Server` / `RemoteServer`)
+- Persist multi-step checks as **versioned JSON workflows**
+- Expose the SDK through a **thin REPL** for fast feedback
+
+**Non-goals**
+
+- Replacing Ansible, Fabric, Kubernetes, or production incident tooling
+- Running arbitrary shell from an LLM (the optional AI layer routes to SDK calls only)
+
+This repository is a **portfolio piece** demonstrating API shape, abstraction boundaries, and developer experience — not a claim to production-scale ops coverage.
+
+---
+
+## Live Demo
+
+~75s walkthrough: REPL → memory → process filters → save workflow → run locally → run on a remote host via SSH.
+
+<!-- Replace XXXXXX after recording — see docs/demo/DEMO.md -->
+[![asciicast](https://asciinema.org/a/XXXXXX.svg)](https://asciinema.org/a/XXXXXX)
+
+You'll see:
+
+1. Host memory and process collections queried through the REPL
+2. A workflow composed in one line and saved to `~/.serverkit/workflows/`
+3. The same workflow executed on a remote host without changing the JSON
+
+Recording steps: [docs/demo/DEMO.md](docs/demo/DEMO.md)
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph clients [Clients]
+        REPL[serverkit REPL]
+        PY[Python scripts]
+    end
+
+    subgraph facade [Facade layer]
+        SRV[Server]
+        REM[RemoteServer]
+        PROTO[ServerFacade Protocol]
+    end
+
+    subgraph domain [Domain collections]
+        PROC[ProcessCollection]
+        LOG[LogFile]
+        WF[Workflow engine]
+    end
+
+    subgraph infra [Infrastructure]
+        OS[psutil / system tools]
+        SSH[Paramiko SSH]
+    end
+
+    REPL --> SRV
+    REPL --> REM
+    PY --> SRV
+    PY --> REM
+    SRV --> PROTO
+    REM --> PROTO
+    PROTO --> PROC
+    PROTO --> LOG
+    PROTO --> WF
+    SRV --> OS
+    REM --> SSH
+```
+
+| Layer | Responsibility |
+|-------|----------------|
+| **Facade** | `Server` / `RemoteServer` — single entry point per host ([`serverkit/core/server.py`](serverkit/core/server.py), [`serverkit/core/protocol.py`](serverkit/core/protocol.py)) |
+| **Collections** | Eager snapshots + fluent filters + terminal `.summarize()` / `.display()` |
+| **Workflows** | JSON `schema_version: 2` pipelines; `_server` injected at runtime for local or remote |
+| **Shell** | Pattern-matched REPL → SDK calls ([`serverkit/shell/parser.py`](serverkit/shell/parser.py)) |
+
+---
+
+## Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Facade + Protocol** | `ServerFacade` lets workflows and tests treat local and SSH targets uniformly without duplicating step logic. |
+| **Fluent collections** | Filters apply eagerly on in-memory snapshots; chains read left-to-right; terminal methods make execution explicit. |
+| **Workflow as composite** | Steps are registered strategies (`StepFactory`); executor walks a shared context dict — easy to add step types without changing the REPL. |
+| **Thin REPL** | Parser maps strings to SDK calls; no embedded Python eval — keeps shell and library boundaries clear. |
+| **Optional extras** | `rich`, `remote`, `docker`, `ai` as install extras — core SDK stays small; `OptionalDependencyError` guides installs. |
+
+**Tradeoffs we accepted**
+
+- Eager snapshots over streaming (simpler mental model; fine for inspection, not for log tailing at scale)
+- REPL coverage is a **subset** of the SDK — scripts are the fully composable surface
+- Remote parity is broad but not exhaustive (workflows are authored locally, executed with remote `_server`)
+
+---
+
+## Example Usage
+
+**REPL** — chains map directly to SDK calls:
+
+```text
+memory
+processes().memory_above(200).sort_by_memory().display()
+workflow("audit").processes().memory_above(300).summarize().save()
+run audit
+```
+
+**Python** — same objects, scriptable:
 
 ```python
 from serverkit import Server
 
 server = Server()
-
-# Processes and memory
 print(server.processes().memory_above(500).sort_by_memory().summarize())
-print(server.memory().summarize())
-
-# Logs
-print(server.logs("/var/log/syslog").errors().tail(50).summarize())
-
-# Disk and services
-print(server.disk().usage_above(80).summarize())
-print(server.systemctl().list_units().active().summarize())
-
-# Workflows — import a catalog template and run it
-server.import_workflow("memory_audit")
-server.run("memory_audit")
-
-# Or build and save your own
-server.workflow("audit").processes().memory_above(1000).summarize().save()
-server.run("audit", dry_run=True)
+server.workflow("audit").processes().memory_above(500).summarize().save()
+server.run("audit")
 ```
 
-### Remote hosts
-
-Requires `[remote]`:
+**Remote** — `Server.connect()` returns a facade that implements the same protocol:
 
 ```python
-from serverkit import Server
-
-with Server.connect("vm1.example", user="deploy", key_path="~/.ssh/id_ed25519") as remote:
-    print(remote.processes().memory_above(200).summarize())
-    print(remote.memory().summarize())
-    remote.service("nginx").status()
-    remote.run("memory_audit")
+with Server.connect("host", user="deploy", key_path="~/.ssh/id_ed25519") as remote:
+    remote.run("audit")  # workflow JSON local; execution uses remote _server
 ```
 
-### Interactive shell
-
-```bash
-serverkit
-```
-
-```text
-help
-memory
-processes().memory_above(500).summarize()
-catalog
-import memory_audit
-run memory_audit
-connect vm1.example --user deploy --key ~/.ssh/id_ed25519
-disconnect
-exit
-```
-
-### Natural language (optional)
-
-Requires `[ai]` and a running [Ollama](https://ollama.com/) instance:
-
-```python
-from serverkit import Server
-print(Server().ask("show processes with cpu above 10 percent"))
-```
-
-```text
-ask list processes with cpu above 10 percent
-ask largest files in /var/log limit 10
-```
-
-The AI layer routes requests through the SDK — it does not execute arbitrary shell from the model. Common phrases like CPU/memory thresholds use deterministic parsing so small models stay reliable.
+More: [examples/](examples/) · [memory_audit.py](examples/memory_audit.py) · [remote_audit.py](examples/remote_audit.py)
 
 ---
 
-## What's included
+## Install
 
-- **Resource facades** — processes, logs, memory, disk, network, ports, systemd, cron, users, environment, Docker
-- **Fluent collections** — chain filters, then `.summarize()`, `.display()`, or `.all()`
-- **Workflow engine** — JSON workflows (`schema_version: 2`), catalog templates, dry-run support
-- **SSH remote** — broad parity with local metrics and workflow execution on remote hosts
-- **REPL** — `serverkit` CLI with completions, fluent chains, and `connect` / `disconnect`
-- **AI assistant** — intent routing, diagnostics, and workflow generation via Ollama
+```bash
+pip install "serverkit[rich]"    # recommended: SDK + REPL + tables
+pip install "serverkit[all]"     # + remote, docker, ai
+serverkit                        # interactive shell
+```
+
+Config is created at `~/.serverkit/config.json` on first launch. Optional extras, AI, and full REPL reference: [User guide](docs/USER_GUIDE.md).
 
 ---
 
@@ -157,12 +173,14 @@ The AI layer routes requests through the SDK — it does not execute arbitrary s
 |-------|-------------|
 | [User guide](docs/USER_GUIDE.md) | Mental model, SDK, REPL, remote, AI, troubleshooting |
 | [Examples](examples/) | Runnable sample scripts |
-
 ---
 
-## Development
+## Team
 
-From a clone:
+- Anoushka Awasthi ([GitHub](https://github.com/anoushkawasthi))
+- Aahil Khan
+
+## Development
 
 ```bash
 python -m venv .venv && source .venv/bin/activate

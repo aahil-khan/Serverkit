@@ -8,6 +8,8 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text.base import StyleAndTextTuples
 from prompt_toolkit.lexers import Lexer
 
+from serverkit.shell.parser import strip_shell_comment
+
 _TOKEN_RE = re.compile(
     r"""
     (?P<string>'[^']*'|"[^"]*")
@@ -27,6 +29,7 @@ def _style_for_kind(kind: str | None) -> str:
         "method": "class:method",
         "call": "class:method",
         "keyword": "class:keyword",
+        "comment": "class:comment",
     }
     return mapping.get(kind or "", "")
 
@@ -34,15 +37,21 @@ def _style_for_kind(kind: str | None) -> str:
 def _line_fragments(line: str) -> StyleAndTextTuples:
     if not line:
         return [("", "")]
+    command = strip_shell_comment(line)
     fragments: StyleAndTextTuples = []
     pos = 0
-    for match in _TOKEN_RE.finditer(line):
+    for match in _TOKEN_RE.finditer(command):
         if match.start() > pos:
-            fragments.append(("", line[pos : match.start()]))
+            fragments.append(("", command[pos : match.start()]))
         fragments.append((_style_for_kind(match.lastgroup), match.group()))
         pos = match.end()
-    if pos < len(line):
-        fragments.append(("", line[pos:]))
+    if pos < len(command):
+        fragments.append(("", command[pos:]))
+    if len(command) < len(line):
+        if fragments and fragments[-1][0] == "":
+            fragments[-1] = ("class:comment", fragments[-1][1] + line[len(command) :])
+        else:
+            fragments.append(("class:comment", line[len(command) :]))
     return fragments
 
 
