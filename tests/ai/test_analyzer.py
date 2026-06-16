@@ -89,6 +89,144 @@ def test_ask_to_list_the_workflows_skips_llm():
     assert "Saved workflows" in out
 
 
+def test_ask_list_catalog_skips_llm():
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(_server_mock(), ollama=stub)
+    out = a.ask("list catalog")
+    assert stub.prompts == []
+    assert "Catalog templates" in out
+
+
+def test_ask_show_memory_skips_llm():
+    snap = MagicMock()
+    snap.summarize.return_value = "RAM: 1/8 GB (12.0%)"
+    srv = _server_mock()
+    srv.memory = MagicMock(return_value=snap)
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("show memory")
+    assert "SHOULD_NOT" not in out
+    assert stub.prompts == []
+    assert out == "RAM: 1/8 GB (12.0%)"
+    srv.memory.assert_called_once()
+
+
+def test_ask_listening_ports_skips_llm():
+    pc = MagicMock()
+    pc.listening.return_value = pc
+    pc.summarize.return_value = ":80 LISTEN"
+    srv = _server_mock()
+    srv.ports = MagicMock(return_value=pc)
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("listening ports")
+    assert stub.prompts == []
+    assert ":80" in out
+    pc.listening.assert_called_once()
+
+
+def test_ask_port_number_skips_llm():
+    pc = MagicMock()
+    pc.listening.return_value = pc
+    pc.port.return_value = pc
+    pc.summarize.return_value = ":443 LISTEN"
+    srv = _server_mock()
+    srv.ports = MagicMock(return_value=pc)
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("port 443")
+    assert stub.prompts == []
+    assert "443" in out
+    pc.port.assert_called_once_with(443)
+
+
+def test_ask_suspicious_cron_skips_llm():
+    cc = MagicMock()
+    cc.suspicious_only.return_value = cc
+    cc.summarize.return_value = "(no suspicious jobs)"
+    srv = _server_mock()
+    srv.cron = MagicMock(return_value=cc)
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("suspicious cron")
+    assert stub.prompts == []
+    assert "suspicious" in out.lower() or "jobs" in out.lower()
+    cc.suspicious_only.assert_called_once()
+
+
+def test_ask_suspicoius_cron_typo_still_skips_llm():
+    cc = MagicMock()
+    cc.suspicious_only.return_value = cc
+    cc.summarize.return_value = "CronJob(...)"
+    srv = _server_mock()
+    srv.cron = MagicMock(return_value=cc)
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("suspicoius cron")
+    assert stub.prompts == []
+    assert "CronJob" in out or "cron" in out.lower()
+    cc.suspicious_only.assert_called_once()
+
+
+def test_ask_logged_in_users_skips_llm():
+    sess = MagicMock()
+    sess.summarize.return_value = "UserSession(user='u', tty='pts/0', host='-', login_at='1')"
+    mgr = MagicMock()
+    mgr.logged_in.return_value = sess
+    srv = _server_mock()
+    srv.users = MagicMock(return_value=mgr)
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("logged in users")
+    assert stub.prompts == []
+    assert "UserSession" in out or "u" in out
+    mgr.logged_in.assert_called_once()
+
+
+def test_run_action_ports_empty_shows_hint():
+    pc = MagicMock()
+    pc.listening.return_value = pc
+    pc.port.return_value = pc
+    pc.summarize.return_value = ""
+    srv = MagicMock()
+    srv._config = Config()
+    srv.ports.return_value = pc
+    a = Analyzer(srv, ollama=MagicMock())
+    out = a._run_action(
+        {"resource": "ports", "filters": [{"action": "listening"}, {"action": "port", "value": 443}]},
+        user_query="port 443",
+    )
+    assert "No sockets matched" in out
+
+
+def test_run_action_memory_ports_users_json():
+    pc = MagicMock()
+    pc.listening.return_value = pc
+    pc.summarize.return_value = "ports ok"
+    snap = MagicMock()
+    snap.summarize.return_value = "mem ok"
+    sess = MagicMock()
+    sess.summarize.return_value = "user ok"
+    mgr = MagicMock()
+    mgr.logged_in.return_value = sess
+    srv = MagicMock()
+    srv._config = Config()
+    srv.ports.return_value = pc
+    srv.memory.return_value = snap
+    srv.users.return_value = mgr
+    stub = MagicMock()
+    a = Analyzer(srv, ollama=stub)
+    assert a._run_action({"resource": "memory", "filters": []}) == "mem ok"
+    assert (
+        a._run_action({"resource": "ports", "filters": [{"action": "listening"}]}, user_query="x")
+        == "ports ok"
+    )
+    assert (
+        a._run_action({"resource": "users", "filters": [{"action": "logged_in"}]}, user_query="x")
+        == "user ok"
+    )
+
+
 def test_ask_empty_resource_json_falls_back_to_chat():
     class _TwoShot(_StubOllama):
         def __init__(self) -> None:

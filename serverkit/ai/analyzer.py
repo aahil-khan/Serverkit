@@ -158,7 +158,16 @@ def _workflow_inventory_reply() -> str:
 
 
 _INTENT_RESOURCES = frozenset(
-    {"process_history", "disk", "processes", "logs", "memory", "ports", "cron"}
+    {
+        "process_history",
+        "disk",
+        "processes",
+        "logs",
+        "memory",
+        "ports",
+        "cron",
+        "users",
+    }
 )
 
 
@@ -229,7 +238,7 @@ Rules:
 - At most 6 filters. Keep the object small.
 
 Schema:
-{{"resource": "processes" | "logs" | "disk" | "process_history" | "memory" | "ports" | "cron", "path": "<only if resource is logs>", "delay_seconds": <optional number for process_history>, "filters": [{{"action": "...", "value": ..., "limit": <optional int>}}]}}
+{{"resource": "processes" | "logs" | "disk" | "process_history" | "memory" | "ports" | "cron" | "users", "path": "<only if resource is logs>", "delay_seconds": <optional number for process_history>, "filters": [{{"action": "...", "value": ..., "limit": <optional int>}}]}}
 
 Process actions: memory_above, cpu_above, named, sort_by_memory, sort_by_cpu
 Log actions: errors, warnings, contains, tail, summarize
@@ -239,8 +248,12 @@ process_history: empty filters or omit; optional delay_seconds between two snaps
 memory: use {{"resource": "memory", "filters": []}} for RAM/swap summary (no filters).
 ports: filters may include {{"action": "listening"}} (LISTEN sockets only), and/or {{"action": "port", "value": 443}} (filter by port number). If filters empty, default is listening-only.
 cron: empty filters for all parsed jobs, or {{"action": "suspicious_only"}} for flagged jobs only.
+users: {{"resource": "users", "filters": [{{"action": "logged_in"}}]}} for `who`-style sessions, or add {{"action": "failed_logins"}} (reads secure/auth log tail on Linux).
 
 Examples:
+Query: who is logged in
+JSON: {{"resource": "users", "filters": [{{"action": "logged_in"}}]}}
+
 Query: show memory usage
 JSON: {{"resource": "memory", "filters": []}}
 
@@ -350,6 +363,16 @@ JSON:"""
                 },
                 user_query=query,
             )
+        if (
+            re.search(r"\blogged\s+in\s+users?\b", q)
+            or re.search(r"\busers?\s+(currently\s+)?logged\s+in\b", q)
+            or re.search(r"\bwho\s+(is\s+)?(logged\s+in|online)\b", q)
+            or re.search(r"\bactive\s+(login\s+)?sessions?\b", q)
+        ):
+            return self._run_action(
+                {"resource": "users", "filters": [{"action": "logged_in"}]},
+                user_query=query,
+            )
         if re.search(r"\b(show|what|current|system)\s+(memory|ram)\b", q) or re.search(
             r"\b(memory|ram)\s+(usage|status|summary)\b", q
         ) or re.search(r"\bhow\s+much\s+(ram|memory)\b", q):
@@ -372,8 +395,9 @@ JSON:"""
                     },
                     user_query=query,
                 )
-        if re.search(r"\bsuspicious\s+cron\b", q) or (
-            re.search(r"\bcron\b", q) and re.search(r"\bsuspicious\b", q)
+        if re.search(r"\b(suspicious|suspicoius|suspicoious)\s+cron\b", q) or (
+            re.search(r"\bcron\b", q)
+            and re.search(r"\b(suspicious|suspicoius|suspicoious)\b", q)
         ):
             return self._run_action(
                 {"resource": "cron", "filters": [{"action": "suspicious_only"}]},
@@ -463,6 +487,8 @@ JSON:"""
             return self._run_ports_action(action)
         if resource == "cron":
             return self._run_cron_action(action)
+        if resource == "users":
+            return self._run_users_action(action)
         if resource == "processes":
             collection: ProcessCollection = self.server.processes()
             for f in self._normalized_filters(action.get("filters")):
@@ -486,7 +512,7 @@ JSON:"""
                 return self._conversational_reply(user_query)
             return (
                 f"Unsupported resource: {resource!r}. "
-                "Try `help` in the REPL, or ask about processes, logs, disk, memory, ports, cron, or process_history."
+                "Try `help` in the REPL, or ask about processes, logs, disk, memory, ports, cron, users, or process_history."
             )
 
     def _run_memory_action(self) -> str:
@@ -507,8 +533,17 @@ JSON:"""
                 if act == "listening":
                     coll = coll.listening()
                 elif act == "port":
-                    coll = coll.port(int(f.get("value")))
-        return coll.summarize()
+                    try:
+                        coll = coll.port(int(f.get("value")))
+                    except (TypeError, ValueError):
+                        return "ports filter 'port' requires a numeric 'value'."
+        out = coll.summarize().strip()
+        if not out:
+            return (
+                "No sockets matched this query (nothing listening on that port, filtered out, "
+                "or psutil returned no rows). Try `ask listening ports` for a broader view."
+            )
+        return out
 
     def _run_cron_action(self, action: dict[str, Any]) -> str:
         if not hasattr(self.server, "cron"):
@@ -517,7 +552,40 @@ JSON:"""
         for f in self._normalized_filters(action.get("filters")):
             if f.get("action") == "suspicious_only":
                 coll = coll.suspicious_only()
-        return coll.summarize()
+        out = coll.summarize().strip()
+        if not out:
+            return (
+                "No cron jobs in this view (on Windows, /etc/crontab is usually missing; "
+                "on Linux, empty can mean no suspicious flags or unreadable paths). "
+                "Try `ask show cron` for all parsed jobs."
+            )
+        return out
+
+    def _run_users_action(self, action: dict[str, Any]) -> str:
+        if not hasattr(self.server, "users"):
+            return "users() is not available on this target."
+        from serverkit.exceptions import ExternalCommandNotFound
+
+        mgr = self.server.users()
+        filters = self._normalized_filters(action.get("filters"))
+        if any(f.get("action") == "failed_logins" for f in filters):
+            coll = mgr.failed_logins()
+            disp = coll.display().strip()
+            if not disp:
+                return "(No failed-login lines matched in the scanned log tail.)"
+            return disp
+        try:
+            coll = mgr.logged_in()
+            out = coll.summarize().strip()
+        except ExternalCommandNotFound as exc:
+            return (
+                "Logged-in users come from the `who` command (common on Linux/macOS). "
+                "On typical Windows installs `who` is not available — use `connect` to a Unix host, "
+                f"or run `users.logged_in().summarize()` where supported.\n({exc})"
+            )
+        if not out:
+            return "(No rows from `who` — no interactive sessions reported.)"
+        return out
 
     def _run_process_history(self, delay_seconds: float) -> str:
         from serverkit.processes.history import ProcessHistory
