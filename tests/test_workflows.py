@@ -55,6 +55,37 @@ def test_workflow_json_round_trip():
     assert loaded.steps[0].memory_above == 1000
 
 
+def test_workflow_executor_json_round_trip():
+    wf = Workflow("with_ex", executor="parallel")
+    wf.add_step(SummaryStep())
+    data = wf.to_dict()
+    assert data.get("executor") == "parallel"
+    loaded = Workflow.from_dict(data)
+    assert loaded.executor == "parallel"
+
+
+def test_workflow_executor_unknown_dropped():
+    data = {
+        "schema_version": 2,
+        "name": "bad_ex",
+        "created_at": None,
+        "last_run": None,
+        "executor": "bogus",
+        "steps": [{"type": "summary"}],
+    }
+    wf = Workflow.from_dict(data)
+    assert wf.executor is None
+
+
+def test_workflow_run_uses_saved_parallel_executor():
+    wf = Workflow("p", executor="parallel")
+    wf.add_step(ProcessFilterStep(memory_above=0))
+    wf.add_step(SummaryStep())
+    with pytest.warns(UserWarning, match="parallel"):
+        ctx = wf.run(Server(), dry_run=False)
+    assert "summary" in ctx
+
+
 def test_builder_saves_expected_json(workflow_dir: Path):
     (
         WorkflowBuilder("memory_audit")

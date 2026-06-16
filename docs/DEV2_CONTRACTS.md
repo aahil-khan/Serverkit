@@ -116,6 +116,7 @@ server.run("memory_audit", dry_run=True)
 ### JSON contract
 
 - `schema_version: 2`
+- Optional top-level **`executor`**: `"sequential"` (default when omitted) or `"parallel"` (deprecated — same step order as sequential, emits `UserWarning` at run). Prefer omitting or using `"sequential"`. `Workflow.run(..., executor=...)` and config `workflow.executor` still override when passed/set.
 - Step `type` strings (registered in `StepFactory`):  
   `process_filter`, `sort`, `log_filter`, `tail`, `summary`, `export`, `chain`, `conditional`  
   Some step classes set `parallel_safe` for documentation; the **`parallel`** workflow executor is deprecated and still runs **sequentially** (see configuration section).

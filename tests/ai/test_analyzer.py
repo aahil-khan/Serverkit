@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 from serverkit.config import Config
@@ -51,6 +52,103 @@ def _server_mock():
     return srv
 
 
+def test_ask_conversational_how_are_you_skips_intent_json():
+    stub = _StubOllama("I'm doing well — how can I help with this server?")
+    a = Analyzer(_server_mock(), ollama=stub)
+    out = a.ask("how are you")
+    assert "well" in out.lower() or "help" in out.lower()
+    assert len(stub.prompts) == 1
+    assert "Output ONE JSON object" not in stub.prompts[0]
+
+
+def test_ask_what_is_the_time_skips_llm():
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(_server_mock(), ollama=stub)
+    out = a.ask("what is the time")
+    assert "SHOULD_NOT" not in out
+    assert stub.prompts == []
+    assert "local time" in out.lower()
+    assert any(ch.isdigit() for ch in out)
+
+
+def test_ask_list_workflows_skips_llm():
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(_server_mock(), ollama=stub)
+    out = a.ask("list workflows")
+    assert "SHOULD_NOT" not in out
+    assert stub.prompts == []
+    assert "Saved workflows" in out
+    assert "Catalog templates" in out
+
+
+def test_ask_to_list_the_workflows_skips_llm():
+    stub = _StubOllama("SHOULD_NOT_BE_USED")
+    a = Analyzer(_server_mock(), ollama=stub)
+    out = a.ask("to list the workflows")
+    assert stub.prompts == []
+    assert "Saved workflows" in out
+
+
+def test_ask_empty_resource_json_falls_back_to_chat():
+    class _TwoShot(_StubOllama):
+        def __init__(self) -> None:
+            super().__init__("")
+            self._n = 0
+
+        def ask(self, prompt: str, **kwargs) -> str:
+            self.prompts.append(prompt)
+            self._n += 1
+            if self._n == 1:
+                return '{"resource": "", "filters": []}'
+            return "Hey there!"
+
+    stub = _TwoShot()
+    a = Analyzer(_server_mock(), ollama=stub)
+    out = a.ask("just saying hi")
+    assert "Hey" in out or "there" in out
+
+
+def test_run_action_logs_not_found_falls_back_when_user_line_is_time_question(monkeypatch):
+    from serverkit.exceptions import LogFileNotFound
+
+    srv = MagicMock()
+    srv._config = Config()
+    srv.logs.side_effect = LogFileNotFound("Log not found: /var/log")
+
+    stub = MagicMock()
+    stub.ask.return_value = "SHOULD_NOT_USE_LLM_FOR_TIME"
+
+    a = Analyzer(srv, ollama=stub)
+    out = a._run_action(
+        {"resource": "logs", "path": "/var/log", "filters": []},
+        user_query="what is the time",
+    )
+    assert "SHOULD_NOT" not in out
+    assert "local time" in out.lower()
+    stub.ask.assert_not_called()
+    srv.logs.assert_called_once_with("/var/log")
+
+
+def test_run_action_logs_not_found_falls_back_when_user_line_is_chatty(monkeypatch):
+    from serverkit.exceptions import LogFileNotFound
+
+    srv = MagicMock()
+    srv._config = Config()
+    srv.logs.side_effect = LogFileNotFound("Log not found: /var/log/auth.log")
+
+    stub = MagicMock()
+    stub.ask.return_value = "Hey! Ask me about processes, memory, or disk on this machine."
+
+    a = Analyzer(srv, ollama=stub)
+    out = a._run_action(
+        {"resource": "logs", "path": "/var/log/auth.log", "filters": []},
+        user_query="how are you",
+    )
+    assert "Hey" in out or "processes" in out.lower()
+    stub.ask.assert_called()
+    srv.logs.assert_called_once_with("/var/log/auth.log")
+
+
 def test_analyzer_deterministic_cpu_skips_llm():
     srv = _server_mock()
     stub = _StubOllama("SHOULD_NOT_BE_USED")
@@ -88,6 +186,7 @@ def test_analyzer_workflow_branch(monkeypatch, tmp_path):
     wf_json = """{
       "schema_version": 2,
       "name": "ai_mem_test",
+      "executor": "parallel",
       "created_at": null,
       "last_run": null,
       "steps": [
@@ -100,7 +199,11 @@ def test_analyzer_workflow_branch(monkeypatch, tmp_path):
     a = Analyzer(_server_mock(), ollama=stub)
     out = a.ask("please make a workflow for high memory processes")
     assert "ai_mem_test" in out
+    assert "parallel" in out
+    assert "deprecated" in out.lower()
     assert (wf_dir / "ai_mem_test.json").exists()
+    saved = json.loads((wf_dir / "ai_mem_test.json").read_text(encoding="utf-8"))
+    assert saved.get("executor") == "parallel"
 
 
 def test_analyzer_deterministic_disk_usage():

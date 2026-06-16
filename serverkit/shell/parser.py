@@ -22,6 +22,71 @@ from serverkit.workflows.manager import WorkflowManager
 if TYPE_CHECKING:
     from serverkit.shell.state import ReplState
 
+# Fallback when `serverkit.ai.analyzer` is an older build without `_looks_conversational_only`.
+_PARSER_GREETING_OPS = re.compile(
+    r"\b(processes?|process|disk|disks?|logs?|log file|cpu|memory|ram|ports?|network|"
+    r"systemd|services?|docker|cron|workflow|snapshot|kill|partition|usage|percent|"
+    r"ssh|mount|tail|grep|mb|gb)\b",
+    re.I,
+)
+
+
+def _parser_greetingish(query: str) -> bool:
+    """Mirror analyzer `_looks_conversational_only` for LogFileNotFound recovery."""
+    text = query.strip()
+    if not text or len(text) > 180:
+        return False
+    if _PARSER_GREETING_OPS.search(text):
+        return False
+    low = text.lower()
+    patterns = (
+        r"^(hi|hello|hey|howdy)\b",
+        r"^good\s+(morning|afternoon|evening)\b",
+        r"\bhow\s+('?re|are)\s+you\b",
+        r"^what'?s\s+up\b",
+        r"^(thanks|thank\s+you|thx)\b",
+        r"^(bye|goodbye)\b",
+        r"^who\s+are\s+you\b",
+        r"^how\s+('?s|is)\s+it\s+going\b",
+    )
+    return any(re.search(p, low) for p in patterns)
+
+
+def _parser_time_date_ish(query: str) -> bool:
+    """Match analyzer `_looks_time_or_date_query` for parser fallbacks."""
+    text = query.strip()
+    if not text or len(text) > 180:
+        return False
+    if _PARSER_GREETING_OPS.search(text):
+        return False
+    low = text.lower()
+    patterns = (
+        r"\bwhat(?:'s| is)\s+the\s+time\b",
+        r"\bwhat\s+time\s+is\s+it\b",
+        r"\bcurrent\s+time\b",
+        r"\btime\s+right\s+now\b",
+        r"\btell\s+me\s+the\s+time\b",
+        r"\bwhat(?:'s| is)\s+today'?s\s+date\b",
+        r"\bwhat\s+day\s+is\s+it\b",
+        r"\bcurrent\s+date\b",
+        r"\bwhat\s+is\s+the\s+date\b",
+        r"\bwhat'?s\s+the\s+date\b",
+    )
+    return any(re.search(p, low) for p in patterns)
+
+
+def _parser_soft_ask(query: str) -> bool:
+    return _parser_greetingish(query) or _parser_time_date_ish(query)
+
+
+def _ask_controlled_log_unreadable(_exc: BaseException) -> str:
+    """User-facing text when `ask` hit a missing/unreadable log path (not raw exception wording)."""
+    return (
+        "Right now it is not included in my functionalities — we'll add them soon. "
+        "You can still use explicit commands from `help` for this host."
+    )
+
+
 HELP_TEXT = """ServerKit shell — commands (see docs/DEV2_CONTRACTS.md)
 
   help                          Show this help
@@ -96,6 +161,7 @@ Remote (requires: pip install serverkit[remote]):
 
 AI (optional: pip install serverkit[ai]; Ollama running, model in config ollama.model):
   ask <question>               Natural language → SDK summary / diagnosis / workflow
+                               Greetings (e.g. how are you) get a short conversational reply
 
 Tab completion lists common SDK strings.
 """
@@ -357,6 +423,12 @@ def _parse_connect_args(
 def parse_input(text: str, state: "ReplState") -> str | None:
     """Translate one line of shell input into a string to print, or None."""
     text = text.strip()
+    # Copy-paste from nested shells often includes leading `>` before the real command.
+    for _ in range(8):
+        if text.startswith(">"):
+            text = text[1:].strip()
+        else:
+            break
     if not text:
         return None
 
@@ -373,13 +445,28 @@ def parse_input(text: str, state: "ReplState") -> str | None:
         if not query:
             return "Usage: ask <natural language question>"
         try:
-            from serverkit.ai.analyzer import Analyzer
+            from serverkit.ai import analyzer as _sk_ai
 
+            Analyzer = _sk_ai.Analyzer
+            looks_soft = getattr(_sk_ai, "_looks_ask_soft_query", None) or _parser_soft_ask
             return Analyzer(state.active).ask(query)
         except OptionalDependencyError as exc:
             return f"{exc}\nInstall with: pip install serverkit[ai]"
         except RuntimeError as exc:
             return str(exc)
+        except LogFileNotFound as exc:
+            # Model JSON often picks `logs` + a Linux default path; recover for chit-chat / time questions.
+            if looks_soft(query):
+                try:
+                    return Analyzer(state.active)._conversational_reply(query)
+                except Exception:
+                    return (
+                        "Hi — I'm ServerKit. I can help with processes, memory, disk, and logs on this machine.\n"
+                        "For best `ask` support, install from your checkout: "
+                        '`pip install -e ".[all]"` then restart `serverkit`.\n'
+                        f"(Underlying issue: {exc})"
+                    )
+            return _ask_controlled_log_unreadable(exc)
 
     if text == "catalog":
         names = WorkflowManager().list_catalog()

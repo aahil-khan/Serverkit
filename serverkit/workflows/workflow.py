@@ -18,14 +18,25 @@ WORKFLOW_DIR = os.path.expanduser("~/.serverkit/workflows/")
 SCHEMA_VERSION = 2
 
 
+def _normalize_workflow_executor(value: object) -> str | None:
+    """Allow only known executor names; unknown values become ``None`` (use config at run)."""
+    if value is None:
+        return None
+    s = str(value).strip().lower()
+    if s in ("sequential", "parallel"):
+        return s
+    return None
+
+
 class Workflow:
     """Named pipeline of steps, saved as JSON under ~/.serverkit/workflows/."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, *, executor: str | None = None) -> None:
         self.name = name
         self.steps: list[WorkflowStep] = []
         self.created_at = datetime.now(timezone.utc).isoformat()
         self.last_run: str | None = None
+        self.executor: str | None = _normalize_workflow_executor(executor)
 
     def add_step(self, step: WorkflowStep) -> Workflow:
         self.steps.append(step)
@@ -45,7 +56,11 @@ class Workflow:
         validate_workflow(self)
         srv = server or Server()
         cfg = getattr(srv, "_config", None) or Config.load()
-        exec_name = executor or cfg.get("workflow", "executor", default="sequential")
+        exec_name = (
+            executor
+            or self.executor
+            or cfg.get("workflow", "executor", default="sequential")
+        )
         return get_executor(exec_name).execute(self, srv, dry_run=dry_run)
 
     def save(self, *, versioned: bool = True) -> None:
@@ -64,17 +79,21 @@ class Workflow:
                 json.dump(payload, f, indent=2)
 
     def to_dict(self) -> dict:
-        return {
+        out: dict = {
             "schema_version": SCHEMA_VERSION,
             "name": self.name,
             "created_at": self.created_at,
             "last_run": self.last_run,
             "steps": [step.to_dict() for step in self.steps],
         }
+        if self.executor:
+            out["executor"] = self.executor
+        return out
 
     @classmethod
     def from_dict(cls, data: dict) -> Workflow:
-        wf = cls(data["name"])
+        ex = _normalize_workflow_executor(data.get("executor"))
+        wf = cls(data["name"], executor=ex)
         wf.created_at = data.get("created_at", wf.created_at)
         wf.last_run = data.get("last_run")
         wf.steps = [StepFactory.create(step) for step in data["steps"]]
