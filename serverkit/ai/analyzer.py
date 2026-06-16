@@ -523,8 +523,12 @@ JSON:"""
         if resource == "disk":
             return self._run_disk_action(action)
         if resource == "memory":
+            low = user_query.strip().lower()
+            # Small models often emit resource=memory for "list processes" — recover.
+            if _MEMORY_PROCESS_LIST.search(low):
+                coll = self.server.processes()
+                return coll.summarize()
             if not _memory_model_intent_plausible(user_query):
-                low = user_query.strip().lower()
                 if _MEMORY_OFF_TOPIC.search(low):
                     return (
                         "That looks like a general or weather question, not a RAM/swap check on this host. "

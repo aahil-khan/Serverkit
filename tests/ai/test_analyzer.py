@@ -46,6 +46,15 @@ def test_ask_weather_does_not_return_ram_summary():
     assert "weather question" in out.lower() or "mispick" in out.lower()
 
 
+def test_ask_list_processes_when_model_returns_memory_json():
+    srv = _server_mock()
+    stub = _StubOllama('{"resource": "memory", "filters": []}')
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("list processes")
+    assert "RAM:" not in out
+    assert "python" in out.lower() or "nginx" in out.lower()
+
+
 def test_ask_show_ram_still_returns_memory():
     snap = MagicMock()
     snap.summarize.return_value = "RAM: ok"
