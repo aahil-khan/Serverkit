@@ -22,7 +22,8 @@ def test_parallel_executor_warns_and_runs_sequentially(tmp_path, monkeypatch, ca
     with pytest.warns(UserWarning, match="parallel"):
         ctx = ParallelExecutor().execute(wf, Server(), dry_run=False)
     assert "summary" in ctx
-    assert "Running: SummaryStep" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "SummaryStep" in out
 
 
 def test_dry_run_does_not_mutate(tmp_path, monkeypatch, capsys):

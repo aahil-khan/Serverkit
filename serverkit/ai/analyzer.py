@@ -1,7 +1,13 @@
-"""Natural-language → SDK actions via Ollama (Dev 2)."""
+"""Natural-language → SDK actions via Ollama (Dev 2).
+
+Maps ``ask <query>`` to the same Server / RemoteServer entry points as the REPL
+(processes, logs, disk, ports, cron, env, memory, network, users, docker, services, systemctl),
+plus **saved workflows** and **catalog** templates (like ``workflow list`` / ``catalog``).
+"""
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from datetime import datetime
@@ -9,7 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 from serverkit.ai.jsonutil import parse_model_json
 from serverkit.ai.ollama_client import DEFAULT_MODEL, OllamaClient
-from serverkit.exceptions import LogFileNotFound
+from serverkit.exceptions import ExternalCommandNotFound, LogFileNotFound, OptionalDependencyError
+from serverkit.workflows.manager import WorkflowManager
 from serverkit.workflows.workflow import Workflow
 
 if TYPE_CHECKING:
@@ -26,7 +33,6 @@ def _extract_largest_files_path_and_limit(query: str) -> tuple[str, int] | None:
         r"largest\s+files\s+(?:in|under|at)\s+\"([^\"]+)\"",
         r"largest\s+files\s+(?:in|under|at)\s+'([^']+)'",
         r"largest\s+files\s+(?:in|under|at)\s+(/\S+)",
-        # Unquoted Windows path: C:\dir\leaf — \S+ stops at the space before "limit N"
         r"largest\s+files\s+(?:in|under|at)\s+([A-Za-z]:\S+)",
     ):
         m = re.search(pattern, query, re.IGNORECASE)
@@ -40,47 +46,6 @@ def _extract_largest_files_path_and_limit(query: str) -> tuple[str, int] | None:
     return None
 
 
-_MEMORY_OFF_TOPIC = re.compile(
-    r"\b(weather|forecast|humidity|snow|rain|tornado|hurricane|celsius|fahrenheit)\b",
-    re.I,
-)
-_MEMORY_PROCESS_LIST = re.compile(
-    r"\b(list|show)\s+process(?:ed|es|ing)?\b|\b(process|apps)\s+list\b",
-    re.I,
-)
-
-
-def _looks_memory_usage_query(query: str) -> bool:
-    """True only for clear RAM/swap snapshot questions (deterministic path)."""
-    low = query.strip().lower()
-    if not low or len(low) > 200:
-        return False
-    if _MEMORY_OFF_TOPIC.search(low) or _MEMORY_PROCESS_LIST.search(low):
-        return False
-    if low in ("ram", "memory", "mem"):
-        return True
-    return bool(
-        re.search(r"\b(show|display|current|system)\s+(memory|ram)\b", low)
-        or re.search(r"\bwhat\s+is\s+(the\s+)?(memory|ram)\b", low)
-        or re.search(r"\b(memory|ram)\s+(usage|status|summary|use|info|stats)\b", low)
-        or re.search(r"\bhow\s+much\s+(ram|memory)\b", low)
-    )
-
-
-def _memory_model_intent_plausible(user_query: str) -> bool:
-    """Block small-model JSON that picks resource=memory for unrelated text."""
-    low = user_query.strip().lower()
-    if not low:
-        return False
-    if _MEMORY_OFF_TOPIC.search(low) or _MEMORY_PROCESS_LIST.search(low):
-        return False
-    if _looks_memory_usage_query(low):
-        return True
-    if len(low) <= 20 and low.isalpha() and not re.search(r"\b(ram|memory|swap)\b", low):
-        return False
-    return bool(re.search(r"\b(ram|memory|swap)\b", low))
-
-
 _OPS_HINT = re.compile(
     r"\b(processes?|process|disk|disks?|logs?|log file|cpu|memory|ram|ports?|network|"
     r"systemd|services?|docker|cron|workflow|snapshot|kill|partition|usage|percent|"
@@ -90,7 +55,6 @@ _OPS_HINT = re.compile(
 
 
 def _looks_conversational_only(query: str) -> bool:
-    """Short greetings / thanks with no obvious server-ops keywords."""
     text = query.strip()
     if not text or len(text) > 180:
         return False
@@ -111,7 +75,6 @@ def _looks_conversational_only(query: str) -> bool:
 
 
 def _looks_time_or_date_query(query: str) -> bool:
-    """Short questions about local wall clock / calendar (not log line timestamps)."""
     text = query.strip()
     if not text or len(text) > 180:
         return False
@@ -134,7 +97,6 @@ def _looks_time_or_date_query(query: str) -> bool:
 
 
 def _looks_ask_soft_query(query: str) -> bool:
-    """Greetings, small talk, or simple local time/date — not log/diagnostic phrasing."""
     return _looks_conversational_only(query) or _looks_time_or_date_query(query)
 
 
@@ -147,71 +109,43 @@ def _local_time_date_reply() -> str:
     )
 
 
-def _looks_catalog_list_query(query: str) -> bool:
-    """`list catalog` / `show catalog` without the word 'workflow' (REPL parity)."""
-    low = query.strip().lower()
-    if not low or len(low) > 80:
-        return False
-    if re.search(r"\b(import|create|run|delete)\b", low):
-        return False
-    if re.search(r"\b(list|show)\s+catalog\b", low):
-        return True
-    if low == "catalog":
-        return True
-    return False
-
-
-def _looks_workflow_inventory_query(query: str) -> bool:
-    """User wants saved workflow names and/or catalog templates (not create/run)."""
-    low = query.strip().lower()
-    if not low or len(low) > 220:
-        return False
-    if re.search(r"\b(create|make|generate|run|execute|delete|remove|save|export)\b", low):
-        return False
-    if "workflow" not in low and "workflows" not in low:
-        return False
-    if re.search(
-        r"(?:\b(list|show|display|get|print|see|enumerate|what\s+are|names?\s+of)\b.*\bworkflows?\b|"
-        r"\bworkflows?\b.*\b(list|show|names?|saved|available|there|i\s+have)\b|"
-        r"\bworkflow\s+list\b|\bto\s+list\s+the\s+workflows\b)",
-        low,
-    ):
-        return True
-    if re.search(r"\b(list|show)\b.*\b(catalog|templates?)\b", low) and "workflow" in low:
-        return True
-    if re.search(r"\bworkflow\s+(catalog|templates?)\b", low):
-        return True
-    return False
-
-
-def _workflow_inventory_reply() -> str:
-    from serverkit.workflows.manager import WorkflowManager
-
-    wm = WorkflowManager()
-    saved = wm.list()
-    catalog = wm.list_catalog()
-    lines = [
-        "Saved workflows (~/.serverkit/workflows/):",
-        ", ".join(saved) if saved else "(none)",
-        "",
-        "Catalog templates (`import NAME` in the REPL):",
-        ", ".join(catalog) if catalog else "(none)",
-    ]
-    return "\n".join(lines)
-
-
-_INTENT_RESOURCES = frozenset(
-    {
-        "process_history",
-        "disk",
-        "processes",
-        "logs",
-        "memory",
-        "ports",
-        "cron",
-        "users",
-    }
+_MEMORY_OFF_TOPIC = re.compile(
+    r"\b(weather|forecast|humidity|snow|rain|tornado|hurricane|celsius|fahrenheit)\b",
+    re.I,
 )
+_MEMORY_PROCESS_LIST = re.compile(
+    r"\b(list|show)\s+process(?:ed|es|ing)?\b|\b(process|apps)\s+list\b",
+    re.I,
+)
+
+
+def _looks_memory_usage_query(query: str) -> bool:
+    low = query.strip().lower()
+    if not low or len(low) > 200:
+        return False
+    if _MEMORY_OFF_TOPIC.search(low) or _MEMORY_PROCESS_LIST.search(low):
+        return False
+    if low in ("ram", "memory", "mem"):
+        return True
+    return bool(
+        re.search(r"\b(show|display|current|system)\s+(memory|ram)\b", low)
+        or re.search(r"\bwhat\s+is\s+(the\s+)?(memory|ram)\b", low)
+        or re.search(r"\b(memory|ram)\s+(usage|status|summary|use|info|stats)\b", low)
+        or re.search(r"\bhow\s+much\s+(ram|memory)\b", low)
+    )
+
+
+def _memory_model_intent_plausible(user_query: str) -> bool:
+    low = user_query.strip().lower()
+    if not low:
+        return False
+    if _MEMORY_OFF_TOPIC.search(low) or _MEMORY_PROCESS_LIST.search(low):
+        return False
+    if _looks_memory_usage_query(low):
+        return True
+    if len(low) <= 20 and low.isalpha() and not re.search(r"\b(ram|memory|swap)\b", low):
+        return False
+    return bool(re.search(r"\b(ram|memory|swap)\b", low))
 
 
 class Analyzer:
@@ -236,10 +170,11 @@ class Analyzer:
         q = query.lower()
         if "create a workflow" in q or "make a workflow" in q:
             return self._generate_workflow(query)
-        if _looks_workflow_inventory_query(query) or _looks_catalog_list_query(query):
-            return _workflow_inventory_reply()
         if any(w in q for w in ("why", "diagnose", "what is causing")):
             return self._diagnose(query)
+        inv = self._try_workflow_inventory_query(q)
+        if inv is not None:
+            return inv
         if _looks_time_or_date_query(query):
             return _local_time_date_reply()
         if _looks_conversational_only(query):
@@ -247,11 +182,10 @@ class Analyzer:
         return self._execute_intent(query)
 
     def _conversational_reply(self, query: str) -> str:
-        """Brief natural-language reply (not JSON intent) for greetings and small talk."""
         if _looks_time_or_date_query(query):
             return _local_time_date_reply()
         prompt = (
-            "You are ServerKit, a friendly assistant for Linux server operations. "
+            "You are ServerKit, a friendly assistant for Linux and Windows server operations. "
             "The user's message is casual conversation, not a request for live system data. "
             "Reply in 1–3 short sentences: warm and professional. "
             "You may mention you can help with processes, logs, disk, memory, workflows, etc. "
@@ -271,49 +205,100 @@ class Analyzer:
                 "Hello! I'm here to help with server checks (processes, memory, disk, logs, …). "
                 f"I can't reach the language model right now: {exc}"
             )
+
+    def _try_workflow_inventory_query(self, q: str) -> str | None:
+        """Match ``list workflows`` / ``catalog`` style questions (no Ollama)."""
+        if self._matches_list_workflows(q):
+            wm = WorkflowManager()
+            saved = wm.list()
+            cat = wm.list_catalog()
+            s_body = "\n".join(saved) if saved else "No workflows saved."
+            c_body = "\n".join(cat) if cat else "(no catalog templates)"
+            return f"Saved workflows\n{s_body}\n\nCatalog templates\n{c_body}"
+        if self._matches_list_catalog(q):
+            names = WorkflowManager().list_catalog()
+            body = "\n".join(names) if names else "(no catalog templates)"
+            return f"Catalog templates\n{body}"
+        return None
+
+    @staticmethod
+    def _matches_list_workflows(q: str) -> bool:
+        if re.search(r"\b(list\s+workflows|workflow\s+list)\b", q):
+            return True
+        if re.search(
+            r"\blist\s+(?:the\s+|my\s+|saved\s+)?workflows\b",
+            q,
+        ):
+            return True
+        if re.search(r"\bto\s+list\s+the\s+workflows\b", q):
+            return True
+        if re.search(r"\b(show|what|which|enumerate)\s+(my\s+)?(saved\s+)?workflows\b", q):
+            return True
+        if re.search(r"\b(saved\s+)?workflow\s+names\b", q):
+            return True
+        return False
+
+    @staticmethod
+    def _matches_list_catalog(q: str) -> bool:
+        s = q.strip()
+        if s == "catalog":
+            return True
+        if re.match(r"^(please\s+)?(list|show)\s+catalog\b", s):
+            return True
+        if re.search(r"\bcatalog\s+templates?\b", q):
+            return True
+        if re.search(r"\b(bundled|built-?in|builtin)\s+workflow\s+templates?\b", q):
+            return True
+        return False
+
+    @staticmethod
+    def _format_workflow_names(names: list[str], *, empty: str, title: str | None = None) -> str:
+        if not names:
+            return empty
+        body = "\n".join(names)
+        if title:
+            return f"{title}\n{body}"
+        return body
+
     def _intent_prompt(self, query: str) -> str:
-        return f"""You are a Linux server assistant. Output ONE JSON object only. No markdown, no comments, no prose before or after.
+        return f"""You are a server operations assistant (Linux or Windows host, local or SSH). Output ONE JSON object only. No markdown, no prose before or after.
 
 Rules:
-- Use double quotes for all keys and string values.
-- Do not include MongoDB fields (_id, ObjectId), pipelines, or example databases.
-- "filters" is an array of objects, each with "action" (string) and optional "value" (number or string).
-- At most 6 filters. Keep the object small.
+- Double quotes for keys and string values.
+- No MongoDB-style fields, no // comments.
+- "filters": array of {{"action": "<name>", "value": <optional>}}. At most 8 filters.
+- Optional "terminal": "summarize" | "display" | "both" (default summarize). For logs only: "json_lines" | "error_rate".
+- For "error_rate" on logs, optional top-level "window_minutes" (number, default 5).
 
-Schema:
-{{"resource": "processes" | "logs" | "disk" | "process_history" | "memory" | "ports" | "cron" | "users", "path": "<only if resource is logs>", "delay_seconds": <optional number for process_history>, "filters": [{{"action": "...", "value": ..., "limit": <optional int>}}]}}
-
-Process actions: memory_above, cpu_above, named, sort_by_memory, sort_by_cpu
-Log actions: errors, warnings, contains, tail, summarize
-Disk partition actions: usage_above, mount_contains, sort_by_used (chain then summarize)
-Disk terminal action: largest_files with "value" = root path string, optional "limit" (number)
-process_history: empty filters or omit; optional delay_seconds between two snapshots (default 0)
-memory: use {{"resource": "memory", "filters": []}} for RAM/swap summary (no filters).
-ports: filters may include {{"action": "listening"}} (LISTEN sockets only), and/or {{"action": "port", "value": 443}} (filter by port number). If filters empty, default is listening-only.
-cron: empty filters for all parsed jobs, or {{"action": "suspicious_only"}} for flagged jobs only.
-users: {{"resource": "users", "filters": [{{"action": "logged_in"}}]}} for `who`-style sessions, or add {{"action": "failed_logins"}} (reads secure/auth log tail on Linux).
+Resources and fields:
+- processes — filters: memory_above, cpu_above, named, sort_by_memory, sort_by_cpu, for_user (value username), group_by_name (no value; must be last filter).
+- logs — required "path" (log file). filters: errors, warnings, contains, match (regex string), tail (n), since, until (ISO datetime strings e.g. 2024-06-01T12:00:00).
+- disk — filters: usage_above (percent), mount_contains (substring), sort_by_used. Terminal action: largest_files with "value" = root path string, optional "limit" (number).
+- process_history — optional top-level "delay_seconds" (number, default 0); empty filters or omit.
+- ports — filters: listening, port (number), owned_by (pid number).
+- cron — filters: suspicious_only.
+- env — filters: keys_matching (substring on var names), contains (substring in values).
+- memory — no filters.
+- network — required "scope": "interfaces" OR "connections". interfaces filters: sort_by_traffic. connections filters: listening, established, on_port (port number).
+- users — required "scope": "logged_in" OR "failed_logins". For failed_logins optional "path" (auth log path, default /var/log/auth.log or /var/log/secure).
+- docker — required "operation": "containers" | "logs" | "stats". containers filters: running. For logs/stats: "container" (name), optional "tail" (number, logs only).
+- services — systemd service list: filters active, named (substring).
+- systemctl — "operation": "list_units" OR "status". For status set "unit" (string e.g. ssh.service).
+- workflows — "operation": "list_saved" OR "list_catalog" (no filters; same as REPL ``workflow list`` / ``catalog``).
 
 Examples:
-Query: who is logged in
-JSON: {{"resource": "users", "filters": [{{"action": "logged_in"}}]}}
-
-Query: show memory usage
-JSON: {{"resource": "memory", "filters": []}}
-
-Query: what ports are listening
-JSON: {{"resource": "ports", "filters": [{{"action": "listening"}}]}}
-
-Query: show port 443
-JSON: {{"resource": "ports", "filters": [{{"action": "listening"}}, {{"action": "port", "value": 443}}]}}
-
-Query: suspicious cron jobs
-JSON: {{"resource": "cron", "filters": [{{"action": "suspicious_only"}}]}}
-
-Query: show python processes using more than 1GB RAM
-JSON: {{"resource": "processes", "filters": [{{"action": "named", "value": "python"}}, {{"action": "memory_above", "value": 1000}}]}}
-
-Query: list processes with cpu above 10 percent
-JSON: {{"resource": "processes", "filters": [{{"action": "cpu_above", "value": 10}}]}}
+{{"resource":"processes","filters":[{{"action":"cpu_above","value":10}}]}}
+{{"resource":"logs","path":"/var/log/syslog","filters":[{{"action":"errors"}}],"terminal":"display"}}
+{{"resource":"disk","filters":[{{"action":"usage_above","value":80}}]}}
+{{"resource":"ports","filters":[{{"action":"listening"}}]}}
+{{"resource":"env","filters":[{{"action":"keys_matching","value":"PATH"}}],"terminal":"display"}}
+{{"resource":"memory"}}
+{{"resource":"network","scope":"connections","filters":[{{"action":"listening"}}]}}
+{{"resource":"users","scope":"logged_in"}}
+{{"resource":"docker","operation":"containers","filters":[{{"action":"running"}}]}}
+{{"resource":"systemctl","operation":"status","unit":"nginx.service"}}
+{{"resource":"workflows","operation":"list_saved"}}
+{{"resource":"workflows","operation":"list_catalog"}}
 
 Query: show disk partitions above 80 percent
 JSON: {{"resource": "disk", "filters": [{{"action": "usage_above", "value": 80}}]}}
@@ -325,11 +310,11 @@ Query: what processes changed in the last second
 JSON: {{"resource": "process_history", "delay_seconds": 1, "filters": []}}
 
 Query: {query}
-Output JSON on one line only, max 320 characters, no markdown fences.
+Output JSON on one line, under 900 characters, no markdown fences.
 JSON:"""
 
     def _try_deterministic_intent(self, query: str) -> str | None:
-        """Answer common process questions without LLM (avoids small-model JSON drift)."""
+        """Answer common questions without LLM (avoids small-model JSON drift)."""
         q = query.lower()
         m = re.search(
             r"cpu\s*(?:above|over|>|greater\s+than)\s*(\d+(?:\.\d+)?)\s*(?:%|percent)?\b",
@@ -387,8 +372,16 @@ JSON:"""
         m = re.search(
             r"(?:disks?|disk\s+usage|partitions?)\s+(?:usage\s+)?(?:above|over|>|greater\s+than)\s*(\d+(?:\.\d+)?)\s*(?:%|percent)?\b",
             q,
+        ) or re.search(
+            r"(?:disk|disks|partition|mount|usage)\s*(?:above|over|>|greater\s+than)\s*(\d+)\s*(?:%|percent)?",
+            q,
+        ) or re.search(
+            r"(?:above|over|>|)\s*(\d+)\s*(?:%|percent)\s*(?:disk|usage|partition)",
+            q,
         )
-        if m:
+        if m and (
+            "disk" in q or "disks" in q or "partition" in q or "mount" in q or "usage" in q
+        ):
             return self._run_action(
                 {
                     "resource": "disk",
@@ -406,46 +399,46 @@ JSON:"""
                 },
                 user_query=query,
             )
-        if (
-            re.search(r"\blogged\s+in\s+users?\b", q)
-            or re.search(r"\busers?\s+(currently\s+)?logged\s+in\b", q)
-            or re.search(r"\bwho\s+(is\s+)?(logged\s+in|online)\b", q)
-            or re.search(r"\bactive\s+(login\s+)?sessions?\b", q)
-        ):
-            return self._run_action(
-                {"resource": "users", "filters": [{"action": "logged_in"}]},
-                user_query=query,
-            )
-        if _looks_memory_usage_query(q):
-            return self._run_action({"resource": "memory", "filters": []}, user_query=query)
-        if re.search(r"\blisten(?:ing)?\s+ports?\b", q) or re.search(
-            r"\bports?\s+(?:that\s+are\s+)?listen(?:ing)?\b", q
+        if re.search(
+            r"\b(listening|open)\s+ports\b|\bports?\s+(that\s+are\s+)?listening\b",
+            q,
         ):
             return self._run_action(
                 {"resource": "ports", "filters": [{"action": "listening"}]},
                 user_query=query,
             )
-        pm = re.search(r"\bport\s+(\d{1,5})\b", q)
-        if pm:
-            n = int(pm.group(1))
-            if 1 <= n <= 65535:
-                return self._run_action(
-                    {
-                        "resource": "ports",
-                        "filters": [{"action": "listening"}, {"action": "port", "value": n}],
-                    },
-                    user_query=query,
-                )
-        if re.search(r"\b(suspicious|suspicoius|suspicoious)\s+cron\b", q) or (
-            re.search(r"\bcron\b", q)
-            and re.search(r"\b(suspicious|suspicoius|suspicoious)\b", q)
-        ):
+        m = re.search(
+            r"(?:^|\s)port\s*#?\s*(\d{1,5})\b|\bon\s+port\s+(\d{1,5})\b",
+            q,
+        )
+        if m:
+            port_n = int(m.group(1) or m.group(2))
+            return self._run_action(
+                {"resource": "ports", "filters": [{"action": "port", "value": port_n}]},
+                user_query=query,
+            )
+        if ("suspicious" in q or "suspicoius" in q) and "cron" in q:
             return self._run_action(
                 {"resource": "cron", "filters": [{"action": "suspicious_only"}]},
                 user_query=query,
             )
-        if re.search(r"\b(show|list|display)\s+cron\b", q) or re.search(r"\bcron\s+jobs?\b", q):
-            return self._run_action({"resource": "cron", "filters": []}, user_query=query)
+        if _looks_memory_usage_query(query):
+            return self._run_action({"resource": "memory"}, user_query=query)
+        if ("path" in q or "PATH" in query) and ("env" in q or "environment" in q):
+            return self._run_action(
+                {
+                    "resource": "env",
+                    "filters": [{"action": "keys_matching", "value": "PATH"}],
+                    "terminal": "display",
+                },
+                user_query=query,
+            )
+        if re.search(r"\blogged(?:\s+|-)in(?:\s+users?)?\b", q) or re.search(
+            r"\bwho\s+is\s+logged\s+in\b", q
+        ):
+            return self._run_action(
+                {"resource": "users", "scope": "logged_in"}, user_query=query
+            )
         return None
 
     def _execute_intent(self, query: str) -> str:
@@ -456,7 +449,7 @@ JSON:"""
         raw = self._ollama.ask(
             prompt,
             temperature=0.05,
-            num_predict=360,
+            num_predict=520,
             stop=["```", "\n\nThe ", "\n\n## "],
         )
         action = parse_model_json(raw)
@@ -482,15 +475,19 @@ JSON:"""
             else:
                 repair = (
                     "Your previous answer was not valid JSON. Reply with ONE JSON object only, "
-                    "same schema as before, under 400 characters. No // comments. No MongoDB.\n"
+                    "under 900 bytes. No // comments.\n"
                     f"User query: {query}\n"
                     f"Broken output (trimmed): {raw[:500]!r}\n"
-                    'Correct example: {{"resource":"processes","filters":[{{"action":"cpu_above","value":10}}]}}'
+                    "Valid examples:\n"
+                    '{"resource":"disk","filters":[{"action":"usage_above","value":80}]}\n'
+                    '{"resource":"ports","filters":[{"action":"listening"}]}\n'
+                    '{"resource":"logs","path":"/var/log/syslog","filters":[{"action":"errors"}]}\n'
+                    '{"resource":"workflows","operation":"list_saved"}\n'
                 )
             raw2 = self._ollama.ask(
                 repair,
                 temperature=0.0,
-                num_predict=120,
+                num_predict=360,
                 stop=["```", "\n"],
             )
             action = parse_model_json(raw2)
@@ -498,152 +495,104 @@ JSON:"""
                 fallback = self._try_deterministic_intent(query)
                 if fallback is not None:
                     return fallback
-                if _looks_ask_soft_query(query):
-                    return self._conversational_reply(query)
                 return (
                     "Could not parse model JSON (even after retry). "
                     "Try a larger model in config `ollama.model`, or rephrase.\n\n"
                     f"First response:\n{raw}\n\nRetry:\n{raw2}"
                 )
+        return self._postprocess_model_action(action, query)
+
+    def _postprocess_model_action(self, action: dict[str, Any], query: str) -> str:
+        res_key = (action.get("resource") or "").strip()
+        if not res_key:
+            try:
+                out = self._ollama.ask(
+                    "The user's message does not map to a server diagnostics request. "
+                    "Reply in 1–2 short friendly sentences; you may offer processes, memory, disk, or logs. "
+                    "Do not invent metrics or command output.\n\n"
+                    f"User: {query.strip()}",
+                    temperature=0.65,
+                    num_predict=200,
+                    stop=["```", "\n\nUser:", "\n\n## "],
+                )
+                return (
+                    (out or "").strip()
+                    or "Hello! I can help check this machine's processes, memory, disk, and logs."
+                )
+            except RuntimeError as exc:
+                return (
+                    "I focus on server diagnostics here (processes, memory, disk, logs, …). "
+                    f"Chat model unavailable: {exc}"
+                )
+
+        resource = res_key.lower()
+        uq = query.strip()
+        low = uq.lower()
+        if resource == "memory":
+            if _MEMORY_OFF_TOPIC.search(low):
+                return (
+                    "That looks like a weather question, not a RAM check — possible model mispick. "
+                    "I cannot query real-world weather from this tool. "
+                    "For memory on this machine, try: \"show memory\", \"how much ram\", or \"memory usage\"."
+                )
+            if _MEMORY_PROCESS_LIST.search(low):
+                return self._run_action(
+                    {"resource": "processes", "filters": []}, user_query=uq
+                )
+            if not _memory_model_intent_plausible(uq):
+                return (
+                    "The assistant picked a memory check, but your question doesn't read like a "
+                    "RAM or swap question (possible mispick). Say e.g. \"show memory\" or "
+                    "\"how much RAM\" if you want usage on this machine."
+                )
+
         return self._run_action(action, user_query=query)
 
-    def _run_action(self, action: dict[str, Any], *, user_query: str = "") -> str:
-        resource = action.get("resource")
-        if resource is None or (isinstance(resource, str) and not resource.strip()):
-            return self._conversational_reply(user_query.strip() or "Hello")
-        if resource == "process_history":
-            delay = action.get("delay_seconds")
-            if delay is None:
-                delay = action.get("delay")
-            try:
-                delay_f = float(delay) if delay is not None else 0.0
-            except (TypeError, ValueError):
-                delay_f = 0.0
-            return self._run_process_history(delay_f)
-        if resource == "disk":
-            return self._run_disk_action(action)
-        if resource == "memory":
-            low = user_query.strip().lower()
-            # Small models often emit resource=memory for "list processes" — recover.
-            if _MEMORY_PROCESS_LIST.search(low):
-                coll = self.server.processes()
-                return coll.summarize()
-            if not _memory_model_intent_plausible(user_query):
-                if _MEMORY_OFF_TOPIC.search(low):
-                    return (
-                        "That looks like a general or weather question, not a RAM/swap check on this host. "
-                        "For memory use `ask show memory` or `ask what is the ram`; for processes use `ask list processes`."
-                    )
-                if _looks_ask_soft_query(user_query):
-                    return self._conversational_reply(user_query)
-                return (
-                    "That line was interpreted as RAM/swap, but it does not look like a memory question "
-                    "(small models often mispick). Try `ask show memory` or `ask list processes`."
-                )
-            return self._run_memory_action()
-        if resource == "ports":
-            return self._run_ports_action(action)
-        if resource == "cron":
-            return self._run_cron_action(action)
-        if resource == "users":
-            return self._run_users_action(action)
-        if resource == "processes":
-            collection: ProcessCollection = self.server.processes()
-            for f in self._normalized_filters(action.get("filters")):
-                collection = self._apply_process_filter(collection, f)
-            return collection.summarize()
-        if resource == "logs":
-            path = action.get("path") or action.get("log_path")
-            if not path:
-                return "Missing logs path in JSON (expected 'path')."
-            try:
-                log: LogFile = self.server.logs(path)
-            except LogFileNotFound:
-                if _looks_ask_soft_query(user_query):
-                    return self._conversational_reply(user_query)
-                raise
-            for f in self._normalized_filters(action.get("filters")):
-                log = self._apply_log_filter(log, f)
-            return log.summarize()
-        if resource not in _INTENT_RESOURCES:
-            if _looks_ask_soft_query(user_query):
-                return self._conversational_reply(user_query)
-            return (
-                f"Unsupported resource: {resource!r}. "
-                "Try `help` in the REPL, or ask about processes, logs, disk, memory, ports, cron, users, or process_history."
-            )
-
-    def _run_memory_action(self) -> str:
-        if not hasattr(self.server, "memory"):
-            return "memory() is not available on this target."
-        return self.server.memory().summarize()
-
-    def _run_ports_action(self, action: dict[str, Any]) -> str:
-        if not hasattr(self.server, "ports"):
-            return "ports() is not available on this target."
-        coll = self.server.ports()
-        filters = self._normalized_filters(action.get("filters"))
-        if not filters:
-            coll = coll.listening()
-        else:
-            for f in filters:
-                act = f.get("action")
-                if act == "listening":
-                    coll = coll.listening()
-                elif act == "port":
-                    try:
-                        coll = coll.port(int(f.get("value")))
-                    except (TypeError, ValueError):
-                        return "ports filter 'port' requires a numeric 'value'."
-        out = coll.summarize().strip()
-        if not out:
-            return (
-                "No sockets matched this query (nothing listening on that port, filtered out, "
-                "or psutil returned no rows). Try `ask listening ports` for a broader view."
-            )
-        return out
-
-    def _run_cron_action(self, action: dict[str, Any]) -> str:
-        if not hasattr(self.server, "cron"):
-            return "cron() is not available on this target."
-        coll = self.server.cron()
-        for f in self._normalized_filters(action.get("filters")):
-            if f.get("action") == "suspicious_only":
-                coll = coll.suspicious_only()
-        out = coll.summarize().strip()
-        if not out:
-            return (
-                "No cron jobs in this view (on Windows, /etc/crontab is usually missing; "
-                "on Linux, empty can mean no suspicious flags or unreadable paths). "
-                "Try `ask show cron` for all parsed jobs."
-            )
-        return out
-
-    def _run_users_action(self, action: dict[str, Any]) -> str:
-        if not hasattr(self.server, "users"):
-            return "users() is not available on this target."
-        from serverkit.exceptions import ExternalCommandNotFound
-
-        mgr = self.server.users()
-        filters = self._normalized_filters(action.get("filters"))
-        if any(f.get("action") == "failed_logins" for f in filters):
-            coll = mgr.failed_logins()
-            disp = coll.display().strip()
-            if not disp:
-                return "(No failed-login lines matched in the scanned log tail.)"
-            return disp
+    def _run_action(self, action: dict[str, Any], *, user_query: str | None = None) -> str:
+        resource = (action.get("resource") or "").lower()
         try:
-            coll = mgr.logged_in()
-            out = coll.summarize().strip()
+            if resource == "process_history":
+                delay = action.get("delay_seconds")
+                if delay is None:
+                    delay = action.get("delay")
+                try:
+                    delay_f = float(delay) if delay is not None else 0.0
+                except (TypeError, ValueError):
+                    delay_f = 0.0
+                return self._run_process_history(delay_f)
+            if resource == "processes":
+                return self._run_processes(action)
+            if resource == "logs":
+                return self._run_logs(action, user_query=user_query)
+            if resource == "disk":
+                return self._run_disk_action(action, user_query=user_query)
+            if resource == "ports":
+                return self._run_ports(action, user_query=user_query)
+            if resource == "cron":
+                return self._run_cron(action)
+            if resource == "env":
+                return self._run_env(action)
+            if resource == "memory":
+                return self._terminal_output(self.server.memory(), action.get("terminal"))
+            if resource == "network":
+                return self._run_network(action)
+            if resource == "users":
+                return self._run_users(action)
+            if resource == "docker":
+                return self._run_docker(action)
+            if resource == "services":
+                return self._run_services(action)
+            if resource == "systemctl":
+                return self._run_systemctl(action)
+            if resource == "workflows":
+                return self._run_workflows(action)
+        except OptionalDependencyError as exc:
+            return f"{exc}\nInstall the documented optional extra (e.g. serverkit[docker])."
         except ExternalCommandNotFound as exc:
-            return (
-                "Logged-in users come from the `who` command (common on Linux/macOS). "
-                "On typical Windows installs `who` is not available — use `connect` to a Unix host, "
-                f"or run `users.logged_in().summarize()` where supported.\n({exc})"
-            )
-        if not out:
-            return "(No rows from `who` — no interactive sessions reported.)"
-        return out
+            return str(exc)
+        except Exception as exc:
+            return f"SDK error while running intent ({resource!r}): {exc}"
+        return f"Unsupported or empty resource: {resource!r}. Use help for supported REPL/SDK commands."
 
     def _run_process_history(self, delay_seconds: float) -> str:
         from serverkit.processes.history import ProcessHistory
@@ -655,7 +604,9 @@ JSON:"""
         diff = ProcessHistory.diff(before, after)
         return ProcessHistory.format_diff(diff)
 
-    def _run_disk_action(self, action: dict[str, Any]) -> str:
+    def _run_disk_action(
+        self, action: dict[str, Any], *, user_query: str | None = None
+    ) -> str:
         from serverkit.disk.manager import DiskCollection
 
         coll: DiskCollection = self.server.disk()
@@ -671,27 +622,18 @@ JSON:"""
                 except (TypeError, ValueError):
                     lim = 20
                 lim = max(1, min(lim, 500))
-                out = coll.largest_files(path, limit=lim).summarize().strip()
-                if not out:
-                    return (
-                        f"No files returned for largest-file scan under {path!r} "
-                        "(empty directory, permissions, or scan skipped files)."
+                out = coll.largest_files(path, limit=lim).summarize()
+                if not (out or "").strip():
+                    hint = (
+                        f"No files returned under {path!r} (empty scan or permission denied)."
                     )
+                    uq = (user_query or "").strip()
+                    if uq:
+                        hint += f" Query was: {uq}"
+                    return hint
                 return out
             coll = self._apply_disk_filter(coll, f)
-        return coll.summarize()
-
-    @staticmethod
-    def _apply_disk_filter(coll: Any, f: dict[str, Any]) -> Any:
-        act = f.get("action")
-        val = f.get("value")
-        if act == "usage_above":
-            return coll.usage_above(float(val))
-        if act == "mount_contains":
-            return coll.mount_contains(str(val))
-        if act == "sort_by_used":
-            return coll.sort_by_used()
-        return coll
+        return self._terminal_output(coll, action.get("terminal"))
 
     @staticmethod
     def _normalized_filters(filters: Any) -> list[dict[str, Any]]:
@@ -703,7 +645,197 @@ JSON:"""
                 out.append(item)
         return out
 
-    def _apply_process_filter(self, collection: ProcessCollection, f: dict[str, Any]):
+    def _run_processes(self, action: dict[str, Any]) -> str:
+        from serverkit.processes.manager import ProcessCollection
+
+        filters = self._normalized_filters(action.get("filters"))
+        collection: ProcessCollection = self.server.processes()
+        for i, f in enumerate(filters):
+            act = f.get("action")
+            if act == "group_by_name":
+                groups = collection.group_by_name()
+                if filters[i + 1 :]:
+                    return "group_by_name must be the last process filter in the intent JSON."
+                return self._format_grouped_processes(groups)
+            collection = self._apply_process_filter(collection, f)
+        return self._terminal_output(collection, action.get("terminal"))
+
+    def _run_logs(
+        self, action: dict[str, Any], *, user_query: str | None = None
+    ) -> str:
+        from serverkit.logs.logfile import LogFile
+
+        path = action.get("path") or action.get("log_path")
+        if not path:
+            return "Missing logs path in JSON (expected 'path')."
+        uq = (user_query or "").strip()
+        try:
+            log: LogFile = self.server.logs(str(path))
+        except LogFileNotFound as exc:
+            if _looks_time_or_date_query(uq):
+                return _local_time_date_reply()
+            if _looks_conversational_only(uq):
+                return self._conversational_reply(uq)
+            return str(exc)
+        for f in self._normalized_filters(action.get("filters")):
+            log = self._apply_log_filter(log, f)
+        term = (action.get("terminal") or "summarize").lower()
+        if term == "json_lines":
+            rows = log.json_lines()
+            return json.dumps(rows[:50], indent=2, default=str)
+        if term == "error_rate":
+            w = float(action.get("window_minutes", 5))
+            r = log.error_rate(w)
+            return (
+                f"Errors: {r.count} in {r.window_minutes:g} min window "
+                f"({r.rate_per_minute:.2f} per minute)."
+            )
+        return self._terminal_output(log, term)
+
+    def _run_disk(self, action: dict[str, Any]) -> str:
+        col = self.server.disk()
+        for f in self._normalized_filters(action.get("filters")):
+            col = self._apply_disk_filter(col, f)
+        return self._terminal_output(col, action.get("terminal"))
+
+    def _run_ports(
+        self, action: dict[str, Any], *, user_query: str | None = None
+    ) -> str:
+        col = self.server.ports()
+        for f in self._normalized_filters(action.get("filters")):
+            col = self._apply_ports_filter(col, f)
+        out = self._terminal_output(col, action.get("terminal"))
+        if not (out or "").strip() and user_query and re.search(
+            r"\b(port|ports|listening)\b", user_query, re.I
+        ):
+            return "No sockets matched that filter on this host."
+        return out
+
+    def _run_cron(self, action: dict[str, Any]) -> str:
+        col = self.server.cron()
+        for f in self._normalized_filters(action.get("filters")):
+            col = self._apply_cron_filter(col, f)
+        return self._terminal_output(col, action.get("terminal"))
+
+    def _run_env(self, action: dict[str, Any]) -> str:
+        snap = self.server.env()
+        for f in self._normalized_filters(action.get("filters")):
+            snap = self._apply_env_filter(snap, f)
+        return self._terminal_output(snap, action.get("terminal"))
+
+    def _run_network(self, action: dict[str, Any]) -> str:
+        scope = (action.get("scope") or "interfaces").lower()
+        nm = self.server.network()
+        if scope == "interfaces":
+            col = nm.interfaces()
+            for f in self._normalized_filters(action.get("filters")):
+                col = self._apply_interface_filter(col, f)
+            return self._terminal_output(col, action.get("terminal"))
+        if scope == "connections":
+            col = nm.connections()
+            for f in self._normalized_filters(action.get("filters")):
+                col = self._apply_connection_filter(col, f)
+            return self._terminal_output(col, action.get("terminal"))
+        return f"Unknown network scope {scope!r}. Use interfaces or connections."
+
+    def _run_users(self, action: dict[str, Any]) -> str:
+        scope = (action.get("scope") or "logged_in").lower()
+        um = self.server.users()
+        if scope == "logged_in":
+            col = um.logged_in()
+            return self._terminal_output(col, action.get("terminal"))
+        if scope == "failed_logins":
+            log_path = action.get("path") or "/var/log/auth.log"
+            col = um.failed_logins(str(log_path))
+            return self._terminal_output(col, action.get("terminal"))
+        return f"Unknown users scope {scope!r}. Use logged_in or failed_logins."
+
+    def _run_docker(self, action: dict[str, Any]) -> str:
+        op = (action.get("operation") or "containers").lower()
+        dm = self.server.docker()
+        if op == "containers":
+            col = dm.containers()
+            for f in self._normalized_filters(action.get("filters")):
+                act = f.get("action")
+                if act == "running":
+                    col = col.running()
+            return self._terminal_output(col, action.get("terminal"))
+        if op == "logs":
+            name = action.get("container") or action.get("name")
+            if not name:
+                return "docker logs intent requires string field 'container'."
+            tail = int(action.get("tail", 100))
+            return dm.logs(str(name), tail=tail)
+        if op == "stats":
+            name = action.get("container") or action.get("name")
+            if not name:
+                return "docker stats intent requires string field 'container'."
+            stats = dm.stats(str(name))
+            return json.dumps(stats, indent=2, default=str)
+        return f"Unknown docker operation {op!r}. Use containers, logs, or stats."
+
+    def _run_services(self, action: dict[str, Any]) -> str:
+        col = self.server.services()
+        for f in self._normalized_filters(action.get("filters")):
+            col = self._apply_service_collection_filter(col, f)
+        return self._terminal_output(col, action.get("terminal"))
+
+    def _run_systemctl(self, action: dict[str, Any]) -> str:
+        op = (action.get("operation") or "list_units").lower()
+        sc = self.server.systemctl()
+        if op == "list_units":
+            col = sc.list_units()
+            for f in self._normalized_filters(action.get("filters")):
+                col = self._apply_systemctl_service_collection_filter(col, f)
+            return self._terminal_output(col, action.get("terminal"))
+        if op == "status":
+            unit = action.get("unit") or action.get("name")
+            if not unit:
+                return "systemctl status intent requires string field 'unit'."
+            return sc.status(str(unit))
+        return f"Unknown systemctl operation {op!r}. Use list_units or status."
+
+    def _run_workflows(self, action: dict[str, Any]) -> str:
+        op = (action.get("operation") or "list_saved").lower()
+        wm = WorkflowManager()
+        if op == "list_saved":
+            return self._format_workflow_names(wm.list(), empty="No workflows saved.")
+        if op == "list_catalog":
+            return self._format_workflow_names(wm.list_catalog(), empty="(no catalog templates)")
+        return f"Unknown workflows operation {op!r}. Use list_saved or list_catalog."
+
+    @staticmethod
+    def _format_grouped_processes(groups: dict[str, Any]) -> str:
+        from serverkit.processes.manager import ProcessCollection
+
+        parts: list[str] = []
+        for name, col in sorted(groups.items()):
+            if not isinstance(col, ProcessCollection):
+                continue
+            n = len(col)
+            summ = col.summarize()
+            parts.append(f"=== {name} ({n} processes) ===\n{summ}")
+        return "\n\n".join(parts) if parts else "(no groups)"
+
+    @staticmethod
+    def _terminal_output(obj: Any, terminal: str | None) -> str:
+        term = (terminal or "summarize").lower()
+        if term == "display" and callable(getattr(obj, "display", None)):
+            return obj.display()
+        if term == "both":
+            chunks: list[str] = []
+            if callable(getattr(obj, "summarize", None)):
+                chunks.append(obj.summarize())
+            if callable(getattr(obj, "display", None)):
+                chunks.append(obj.display())
+            return "\n\n".join(c for c in chunks if c)
+        if callable(getattr(obj, "summarize", None)):
+            return obj.summarize()
+        if callable(getattr(obj, "display", None)):
+            return obj.display()
+        return str(obj)
+
+    def _apply_process_filter(self, collection: Any, f: dict[str, Any]) -> Any:
         act = f.get("action")
         val = f.get("value")
         if act == "memory_above":
@@ -716,9 +848,11 @@ JSON:"""
             return collection.sort_by_memory()
         if act == "sort_by_cpu":
             return collection.sort_by_cpu()
+        if act == "for_user":
+            return collection.for_user(str(val))
         return collection
 
-    def _apply_log_filter(self, log: LogFile, f: dict[str, Any]):
+    def _apply_log_filter(self, log: Any, f: dict[str, Any]) -> Any:
         act = f.get("action")
         val = f.get("value")
         if act == "errors":
@@ -727,25 +861,144 @@ JSON:"""
             return log.warnings()
         if act == "contains":
             return log.contains(str(val))
+        if act == "match":
+            return log.match(str(val))
         if act == "tail":
             return log.tail(int(val))
+        if act == "since":
+            ts = self._parse_iso_datetime(val)
+            if ts is None:
+                return log
+            return log.since(ts)
+        if act == "until":
+            ts = self._parse_iso_datetime(val)
+            if ts is None:
+                return log
+            return log.until(ts)
         if act == "summarize":
             return log
         return log
 
+    @staticmethod
+    def _parse_iso_datetime(val: Any) -> datetime | None:
+        if val is None:
+            return None
+        s = str(val).strip()
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _apply_disk_filter(col: Any, f: dict[str, Any]) -> Any:
+        act = f.get("action")
+        val = f.get("value")
+        if act == "usage_above":
+            return col.usage_above(float(val))
+        if act == "mount_contains":
+            return col.mount_contains(str(val))
+        if act == "sort_by_used":
+            return col.sort_by_used()
+        return col
+
+    @staticmethod
+    def _apply_ports_filter(col: Any, f: dict[str, Any]) -> Any:
+        act = f.get("action")
+        val = f.get("value")
+        if act == "listening":
+            return col.listening()
+        if act == "port":
+            return col.port(int(val))
+        if act == "owned_by":
+            return col.owned_by(int(val))
+        return col
+
+    @staticmethod
+    def _apply_cron_filter(col: Any, f: dict[str, Any]) -> Any:
+        if f.get("action") == "suspicious_only":
+            return col.suspicious_only()
+        return col
+
+    @staticmethod
+    def _apply_env_filter(snap: Any, f: dict[str, Any]) -> Any:
+        act = f.get("action")
+        val = f.get("value")
+        if act == "keys_matching":
+            return snap.keys_matching(str(val))
+        if act == "contains":
+            return snap.contains(str(val))
+        return snap
+
+    @staticmethod
+    def _apply_interface_filter(col: Any, f: dict[str, Any]) -> Any:
+        if f.get("action") == "sort_by_traffic":
+            return col.sort_by_traffic()
+        return col
+
+    @staticmethod
+    def _apply_connection_filter(col: Any, f: dict[str, Any]) -> Any:
+        act = f.get("action")
+        val = f.get("value")
+        if act == "listening":
+            return col.listening()
+        if act == "established":
+            return col.established()
+        if act == "on_port":
+            return col.on_port(int(val))
+        return col
+
+    @staticmethod
+    def _apply_service_collection_filter(col: Any, f: dict[str, Any]) -> Any:
+        act = f.get("action")
+        val = f.get("value")
+        if act == "active":
+            return col.active()
+        if act == "named":
+            return col.named(str(val))
+        return col
+
+    @staticmethod
+    def _apply_systemctl_service_collection_filter(col: Any, f: dict[str, Any]) -> Any:
+        act = f.get("action")
+        val = f.get("value")
+        if act == "active":
+            return col.active()
+        if act == "named":
+            return col.named(str(val))
+        return col
+
     def _diagnose(self, query: str) -> str:
-        procs = self.server.processes().sort_by_memory().all()[:10]
-        proc_summary = "\n".join(
-            f"{p.name}: {p.memory_mb:.0f}MB, CPU {p.cpu_percent:.1f}%" for p in procs
-        )
-        prompt = f"""You are a Linux server diagnostician.
-Top 10 processes by memory:
-{proc_summary}
+        blocks: list[str] = []
+        try:
+            procs = self.server.processes().sort_by_memory().all()[:10]
+            proc_summary = "\n".join(
+                f"{p.name}: {p.memory_mb:.0f}MB, CPU {p.cpu_percent:.1f}%" for p in procs
+            )
+            blocks.append("Top 10 processes by memory:\n" + proc_summary)
+        except Exception as exc:
+            blocks.append(f"Processes: (unavailable: {exc})")
+        for label, fn in (
+            ("Memory", lambda: self.server.memory().summarize()),
+            ("Disk", lambda: self.server.disk().summarize()),
+            ("Ports (sample)", lambda: self.server.ports().listening().summarize()),
+        ):
+            try:
+                blocks.append(f"{label}:\n{fn()}")
+            except Exception as exc:
+                blocks.append(f"{label}: (unavailable: {exc})")
+        try:
+            blocks.append("Cron (suspicious sample):\n" + self.server.cron().suspicious_only().summarize())
+        except Exception as exc:
+            blocks.append(f"Cron: (unavailable: {exc})")
+        ctx = "\n\n".join(str(b) for b in blocks)
+        prompt = f"""You are a server diagnostician. Use the live metrics below (local or remote target).
+
+{ctx}
 
 User question: {query}
 
-Give a clear, concise diagnosis in 3-5 lines."""
-        return self._ollama.ask(prompt, temperature=0.4, num_predict=400)
+Give a clear, concise diagnosis in 3-6 lines. If a metric block is missing, say what else to check."""
+        return self._ollama.ask(prompt, temperature=0.4, num_predict=500)
 
     def _workflow_prompt(self, query: str) -> str:
         return f"""Convert this request into ONE ServerKit workflow JSON object.
@@ -753,15 +1006,10 @@ Return ONLY valid JSON. No markdown, no // comments, no text before or after.
 
 Required keys: schema_version (2), name, created_at (null), last_run (null), steps (array).
 
-Optional key: executor — string "sequential" (default) or "parallel".
-Use "sequential" unless the user explicitly wants the legacy parallel mode.
-Note: "parallel" is deprecated (still runs steps in order, emits a runtime warning).
-
 Example steps for high-memory audit:
 {{
   "schema_version": 2,
   "name": "high_memory_audit",
-  "executor": "sequential",
   "created_at": null,
   "last_run": null,
   "steps": [
@@ -795,10 +1043,12 @@ JSON:"""
         try:
             wf = Workflow.from_dict(wf_data)
             wf.save()
-            ex = wf.executor if wf.executor else "default (config workflow.executor)"
-            note = ""
-            if wf.executor == "parallel":
-                note = " Note: executor is 'parallel' (deprecated — same step order as sequential, emits a warning at run)."
-            return f"Workflow created and saved: {wf.name} (executor: {ex}).{note}"
+            ex = wf.executor or wf_data.get("executor")
+            msg = f"Workflow created and saved: {wf.name}"
+            if ex:
+                msg += f" (executor: {ex})"
+            if str(ex or "").lower() == "parallel":
+                msg += ". The parallel executor is deprecated (prefer sequential)."
+            return msg
         except Exception as exc:
             return f"Failed to generate workflow: {exc}\nRaw:\n{raw}"

@@ -46,8 +46,8 @@ ServerKit is a **Python library** plus a small **terminal app** (`serverkit`) th
 ### 2.4 Execution flow (AI)
 
 1. **`ask …`** (REPL) or **`Server().ask("…")`** (Python) enters **`Analyzer`**.
-2. The query is routed: **workflow phrase** → generate workflow JSON; **“why / diagnose”** → diagnostic prompt with top processes; else **intent** → JSON action for processes/logs.
-3. Parsed actions call **`server.processes()` / `server.logs()`** etc. — same as if you typed SDK code yourself.
+2. The query is routed: **workflow phrase** → generate workflow JSON; **“why / diagnose”** → diagnostic prompt with live **processes, memory, disk, ports (listening sample), cron (suspicious sample)**; else **intent** → JSON mapped to **`server` calls**: **processes, logs, disk, ports, cron, env, memory, network, users, docker, services, systemctl** (same entry points as the REPL / SDK, local or **`RemoteServer`** after `connect`).
+3. Parsed actions invoke **`server.processes()`**, **`server.logs(path)`**, **`server.disk()`**, etc. — the model proposes filters; the SDK performs all real work (no arbitrary shell from the model).
 
 ---
 
@@ -239,6 +239,9 @@ Examples:
 
 ```text
 ask list processes with cpu above 10 percent
+ask show disks above 70 percent
+ask list listening ports
+ask what env variables match PATH
 ask why might memory be high?
 ask create a workflow to find high memory processes
 ```
@@ -271,7 +274,7 @@ processes().sort_by_memory().display()
 
 **Destructive process helpers** (`kill_all`, `terminate_all` on `ProcessCollection`) are **SDK-only** by default — the REPL does not map them, to avoid accidental mass signals.
 
-`service … start|stop|restart` runs real systemd actions — use with care. **`workflow("…").….save()`** uses the **local** `Server` instance inside the REPL (`state.server`), not the remote handle — **disconnect** (or use Python) if you need to author JSON on disk while a session is connected. **`disk().largest_files()`** on **`RemoteServer`** runs **`find`** on the **remote** host (requires GNU `find` with `-printf`; otherwise you get an empty or partial result).
+`service … start|stop|restart` runs real systemd actions — use with care. **`workflow("…").….save()`** uses the **local** `Server` instance inside the REPL (`state.server`), not the remote handle — **disconnect** (or use Python) if you need to author JSON on disk while a session is connected. After **`connect`**, **`RemoteServer`** supports the same resource chains where data is fetched over SSH (see `help`). **`disk().largest_files()`** on **`RemoteServer`** runs **`find`** on the **remote** host (requires GNU `find` with `-printf`; otherwise you get an empty or partial result).
 
 ---
 
@@ -314,7 +317,7 @@ Environment: **`OLLAMA_HOST`** overrides Ollama base URL (default `http://127.0.
 | `OptionalDependencyError` | Install the named extra, e.g. `[remote]` or `[ai]` |
 | `WinError 32` on `serverkit.exe` during pip | Exit `serverkit` / close handles on `.venv\Scripts\serverkit.exe` |
 | `connect` times out | Firewall, SSH daemon, correct IP/port, security group |
-| `ask` returns bad JSON / essays | Use **`ask … cpu/memory above N`** (deterministic path); upgrade `ollama.model`; see `AI_TESTING.md` |
+| `ask` returns bad JSON / essays | Try explicit numbers (**`ask … cpu/memory/disk above N`** hits deterministic routing); upgrade `ollama.model`; see `AI_TESTING.md` |
 | `Unknown command` in REPL | Use exact commands from `help` or prefix AI with **`ask `** |
 
 ---

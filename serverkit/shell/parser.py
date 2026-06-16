@@ -21,79 +21,60 @@ from serverkit.workflows.manager import WorkflowManager
 
 if TYPE_CHECKING:
     from serverkit.shell.state import ReplState
-
-# Fallback when `serverkit.ai.analyzer` is an older build without `_looks_conversational_only`.
-_PARSER_GREETING_OPS = re.compile(
-    r"\b(processes?|process|disk|disks?|logs?|log file|cpu|memory|ram|ports?|network|"
-    r"systemd|services?|docker|cron|workflow|snapshot|kill|partition|usage|percent|"
-    r"ssh|mount|tail|grep|mb|gb)\b",
-    re.I,
-)
+    from serverkit.shell.style import ShellStyle
 
 
-def _parser_greetingish(query: str) -> bool:
-    """Mirror analyzer `_looks_conversational_only` for LogFileNotFound recovery."""
-    text = query.strip()
-    if not text or len(text) > 180:
-        return False
-    if _PARSER_GREETING_OPS.search(text):
-        return False
-    low = text.lower()
-    patterns = (
-        r"^(hi|hello|hey|howdy)\b",
-        r"^good\s+(morning|afternoon|evening)\b",
-        r"\bhow\s+('?re|are)\s+you\b",
-        r"^what'?s\s+up\b",
-        r"^(thanks|thank\s+you|thx)\b",
-        r"^(bye|goodbye)\b",
-        r"^who\s+are\s+you\b",
-        r"^how\s+('?s|is)\s+it\s+going\b",
+def _strip_leading_gt_prompts(line: str) -> str:
+    """Remove repeated ``> `` / ``>`` prefixes from pasted transcript lines."""
+    s = line.strip()
+    while s.startswith("> "):
+        s = s[2:].lstrip()
+    if s.startswith(">"):
+        s = s[1:].lstrip()
+    return s
+
+
+def _handle_ask_log_file_not_found(query: str, exc: LogFileNotFound, state: "ReplState") -> str:
+    """When ``ask`` fails because a log path is missing, avoid leaking raw errors for soft queries."""
+    from serverkit.ai.analyzer import (
+        Analyzer,
+        _local_time_date_reply,
+        _looks_conversational_only,
+        _looks_time_or_date_query,
     )
-    return any(re.search(p, low) for p in patterns)
 
-
-def _parser_time_date_ish(query: str) -> bool:
-    """Match analyzer `_looks_time_or_date_query` for parser fallbacks."""
-    text = query.strip()
-    if not text or len(text) > 180:
-        return False
-    if _PARSER_GREETING_OPS.search(text):
-        return False
-    low = text.lower()
-    patterns = (
-        r"\bwhat(?:'s| is)\s+the\s+time\b",
-        r"\bwhat\s+time\s+is\s+it\b",
-        r"\bcurrent\s+time\b",
-        r"\btime\s+right\s+now\b",
-        r"\btell\s+me\s+the\s+time\b",
-        r"\bwhat(?:'s| is)\s+today'?s\s+date\b",
-        r"\bwhat\s+day\s+is\s+it\b",
-        r"\bcurrent\s+date\b",
-        r"\bwhat\s+is\s+the\s+date\b",
-        r"\bwhat'?s\s+the\s+date\b",
-    )
-    return any(re.search(p, low) for p in patterns)
-
-
-def _parser_soft_ask(query: str) -> bool:
-    return _parser_greetingish(query) or _parser_time_date_ish(query)
-
-
-def _ask_controlled_log_unreadable(_exc: BaseException) -> str:
-    """User-facing text when `ask` hit a missing/unreadable log path (not raw exception wording)."""
+    if _looks_time_or_date_query(query):
+        return _local_time_date_reply()
+    if _looks_conversational_only(query):
+        az = Analyzer(state.active)
+        try:
+            return az._conversational_reply(query)
+        except RuntimeError:
+            return (
+                "Hi — I'm ServerKit. I couldn't read that log path right now "
+                f"({exc}). Type `help` for commands you can run here."
+            )
     return (
-        "Right now it is not included in my functionalities — we'll add them soon. "
-        "You can still use explicit commands from `help` for this host."
+        "That path is not available from here, and that kind of request "
+        "is not included in my functionalities on this host. "
+        "Type `help` for supported log and diagnostics commands."
     )
 
 
-HELP_TEXT = """ServerKit shell — commands (see docs/DEV2_CONTRACTS.md)
+HELP_TEXT = """\
+--------------------------------------------------------------------------------
+  ServerKit shell — command reference
+--------------------------------------------------------------------------------
 
+  Shell
+  -----
   help                          Show this help
-  clr | clear                   Clear the terminal screen (Windows: cls; Unix: clear)
+  menu                          Interactive guided command builder
+  clr | clear                   Clear the terminal (Windows: cls, Unix: clear)
   exit                          Leave the shell
 
-Processes (chain uses active target: local or connected remote):
+  Processes (classic forms; active target = local or remote after connect)
+  ---------------------------------------------------------------------------
   processes.all()
   processes.memory_above(N)
   processes.cpu_above(N)
@@ -102,69 +83,116 @@ Processes (chain uses active target: local or connected remote):
   processes.sort_by_cpu().all()
   (SDK) active.process_history.diff(list_a, list_b)  # two processes().all() snapshots; not a shell verb
 
-Logs:
-  logs("path").errors()         Summarize ERROR lines
+  Logs
+  ----
+  logs("path").errors()              Summarize ERROR lines
   logs("path").warnings()
-  logs("path").contains("text") Substring filter (SDK LogFile.contains)
-  logs("path").match("regex")   Regex filter (SDK LogFile.match)
+  logs("path").contains("text")      Substring filter (LogFile.contains)
+  logs("path").match("regex")        Regex filter (LogFile.match)
   logs("path").summarize()
   logs("path").tail(N)
-  logs("path").since("2024-06-01T12:00:00")   # filter by parsed line timestamps
+  logs("path").since("2024-06-01T12:00:00")   # parsed line timestamps
   logs("path").until("2024-06-02T00:00:00")
-  logs("path").json_lines()         # JSON array (terminal)
-  logs("path").error_rate()         # or .error_rate(10) window minutes (terminal)
+  logs("path").json_lines()             # JSON array (terminal)
+  logs("path").error_rate()             # or .error_rate(10) — window minutes
 
-Memory:
+  Memory
+  ------
   memory                        RAM / swap summary
-  memory.json                   Same snapshot as JSON (SDK MemorySnapshot.to_dict)
+  memory.json                   Same snapshot as JSON (MemorySnapshot.to_dict)
 
-Workflows:
+  Workflows (saved + catalog)
+  ---------------------------
   workflow create NAME          Interactive builder (local save)
-  workflow list                 Saved workflows in ~/.serverkit/workflows/
+  workflow list                 Saved under ~/.serverkit/workflows/
   workflow run NAME             Run on active target
   catalog                       Bundled template names
   import NAME                   Import catalog template by name
   run NAME [--dry-run]          Run saved workflow
 
-Disk / network / ports / systemd / cron / users / env / Docker (local or after connect):
-  disk | disk.usage_above(80).summarize()
-  network.interfaces() | network.connections().listening().display()
-  ports | ports.listening().summarize()
-  systemctl.list_units().active().summarize()
-  services | services().named("nginx").summarize()
-  service UNIT status|start|stop|restart|is_active
-  cron | cron.suspicious_only().display()
-  users.logged_in().summarize() | users.failed_logins().display()
-  env | env.keys_matching("PATH").display()   # substring of *variable name*
-  env.contains("OneDrive")                    # substring in *values* (paths, etc.)
-  docker() | docker().containers().running().summarize()
-  docker.logs("NAME"[, N])      # local: docker-py; remote: docker CLI over SSH
+  Host & services (local or after connect)
+  ----------------------------------------
+  disk                          disk() — partitions; chain e.g. .usage_above(80).summarize()
+  network.interfaces()          network.connections() — chain e.g. .listening().display()
+  ports                         ports() — chain e.g. .listening().summarize()
+  systemctl.list_units()        Chain e.g. .active().summarize()
+  services                      services() — chain e.g. .named("nginx").summarize()
+  service UNIT ACTION           ACTION: status | start | stop | restart | is_active
+  cron                          cron() — chain e.g. .suspicious_only().display()
+  users.logged_in()             users.failed_logins() — chain .summarize() / .display()
+  env                           env() — .keys_matching("PATH") matches variable *names*
+  env.contains("OneDrive")      Substring in *values* (paths, etc.)
+  docker()                      docker().containers().running().summarize()
+  docker.logs("NAME"[, N])      Local: docker-py; remote: docker over SSH
   docker.stats("NAME")
-  containers()                # alias of docker().containers()
+  containers()                  Alias of docker().containers()
 
-Processes (fluent root, same as SDK processes()):
-  processes() | processes().for_user("u").display()
-  processes().group_by_name().summarize()   # grouped apps (terminal)
-  processes().memory_above(N).summarize()   … any ProcessCollection chain
+  Processes (fluent root — same as SDK processes())
+  ---------------------------------------------------
+  processes()                   e.g. processes().for_user("u").display()
+  processes().group_by_name().summarize()     # grouped apps (terminal)
+  processes().memory_above(N).summarize()     # … any ProcessCollection chain
 
-Systemctl (raw unit names; same subprocess as SDK SystemctlManager):
+  Systemctl (raw unit names; same subprocess as SystemctlManager)
+  -----------------------------------------------------------------
   systemctl.status("UNIT")
-  systemctl.start("UNIT") | systemctl.stop("UNIT") | systemctl.restart("UNIT")
+  systemctl.start("UNIT")       systemctl.stop("UNIT")    systemctl.restart("UNIT")
 
-Workflow one-liner (local only; must end with .save()):
+  Workflow one-liner (local only; must end with .save())
+  --------------------------------------------------------
   workflow("NAME").processes().memory_above(500).summarize().save()
 
-Remote (requires: pip install serverkit[remote]):
+  Remote SSH
+  ----------
   connect HOST [--user U] [--key PATH] [--port N] [--password P]
-    [--timeout SEC] [--no-agent] [--no-look-for-keys]
+           [--timeout SEC] [--no-agent] [--no-look-for-keys]   # needs: pip install serverkit[remote]
   disconnect
 
-AI (optional: pip install serverkit[ai]; Ollama running, model in config ollama.model):
-  ask <question>               Natural language → SDK summary / diagnosis / workflow
-                               Greetings (e.g. how are you) get a short conversational reply
+  AI (optional: pip install serverkit[ai]; Ollama + ollama.model in config)
+  -------------------------------------------------------------------------
+  ask <question>                Natural language → SDK (processes, logs, disk,
+                                ports, cron, env, memory, network, users, docker,
+                                services, systemctl), diagnose, or workflows
 
-Tab completion lists common SDK strings.
+  Tab completion lists common SDK strings.
 """
+
+
+def build_help_text(style: "ShellStyle | None" = None) -> str:
+    """Return help text, styled when a ShellStyle with color is provided."""
+    from serverkit.shell.style import ShellStyle
+
+    if style is None or not style.enabled:
+        return HELP_TEXT
+
+    body: list[str] = []
+    lines = HELP_TEXT.splitlines()
+    index = 0
+    while index < len(lines) and (
+        lines[index].startswith("-")
+        or "command reference" in lines[index]
+        or lines[index].startswith("Further")
+    ):
+        index += 1
+
+    while index < len(lines):
+        line = lines[index]
+        next_line = lines[index + 1] if index + 1 < len(lines) else ""
+        if (
+            line.startswith("  ")
+            and line.strip()
+            and next_line.strip().replace("-", "") == ""
+            and len(next_line.strip()) > 3
+        ):
+            title = line.strip()
+            body.append(f"  {style.accent(title)}")
+            body.append(f"  {style.dim('─' * min(48, max(len(title), 20)))}")
+            index += 2
+            continue
+        body.append(line)
+        index += 1
+
+    return style.help_header() + "\n".join(body)
 
 
 def extract_number(text: str) -> float:
@@ -310,6 +338,12 @@ def _apply_log_chain(state: "ReplState", path: str, chain: str) -> str:
     return lf.summarize()
 
 
+def _ok(message: str, style: "ShellStyle | None") -> str:
+    if style and style.enabled:
+        return style.format_success(message)
+    return message
+
+
 def apply_step_command(builder: WorkflowBuilder, step: str) -> str | None:
     """Map a builder step line to WorkflowBuilder methods. Returns error message or None."""
     parts = shlex.split(step.strip())
@@ -354,29 +388,29 @@ def apply_step_command(builder: WorkflowBuilder, step: str) -> str | None:
 
 
 def run_workflow_builder(name: str, state: "ReplState") -> str:
-    print(f"Workflow builder: {name}")
-    print("Enter steps (see help). Type save when done, cancel to abort.")
-    print(
-        "Examples: processes | memory_above 500 | sort_by_memory | summarize\n"
-        "          logs /var/log/syslog | errors | tail 20 | summarize\n"
-        "          export /tmp/report.txt"
-    )
+    style = state.style
+    style.builder_header(name)
+    style.builder_examples()
     builder = state.server.workflow(name)
+    prompt = style.builder_prompt()
     while True:
         try:
-            raw = input("step> ").strip()
+            raw = input(prompt).strip()
         except EOFError:
             return "Cancelled (EOF)."
         if not raw:
             continue
         if raw == "save":
             builder.save()
-            return f"Workflow saved: {name}"
+            message = f"Workflow saved: {name}"
+            return style.format_success(message) if style.enabled else message
         if raw == "cancel":
             return "Cancelled."
         err = apply_step_command(builder, raw)
         if err:
-            print(err)
+            print(style.format_error(err) if style.enabled else err)
+            continue
+        style.builder_step_ok(raw)
 
 
 def _parse_connect_args(
@@ -420,21 +454,20 @@ def _parse_connect_args(
     return host, user, key_path, port, password, timeout, allow_agent, look_for_keys
 
 
-def parse_input(text: str, state: "ReplState") -> str | None:
+def parse_input(
+    text: str,
+    state: "ReplState",
+    *,
+    style: "ShellStyle | None" = None,
+) -> str | None:
     """Translate one line of shell input into a string to print, or None."""
-    text = text.strip()
-    # Copy-paste from nested shells often includes leading `>` before the real command.
-    for _ in range(8):
-        if text.startswith(">"):
-            text = text[1:].strip()
-        else:
-            break
+    text = _strip_leading_gt_prompts(text)
     if not text:
         return None
 
     # --- Meta / contracts (DEV2_CONTRACTS) ---
     if text == "help":
-        return HELP_TEXT
+        return build_help_text(style)
 
     if text.lower() in ("clr", "clear"):
         os.system("cls" if os.name == "nt" else "clear")
@@ -445,39 +478,30 @@ def parse_input(text: str, state: "ReplState") -> str | None:
         if not query:
             return "Usage: ask <natural language question>"
         try:
-            from serverkit.ai import analyzer as _sk_ai
+            from serverkit.ai.analyzer import Analyzer
 
-            Analyzer = _sk_ai.Analyzer
-            looks_soft = getattr(_sk_ai, "_looks_ask_soft_query", None) or _parser_soft_ask
             return Analyzer(state.active).ask(query)
         except OptionalDependencyError as exc:
             return f"{exc}\nInstall with: pip install serverkit[ai]"
+        except LogFileNotFound as exc:
+            return _handle_ask_log_file_not_found(query, exc, state)
         except RuntimeError as exc:
             return str(exc)
-        except LogFileNotFound as exc:
-            # Model JSON often picks `logs` + a Linux default path; recover for chit-chat / time questions.
-            if looks_soft(query):
-                try:
-                    return Analyzer(state.active)._conversational_reply(query)
-                except Exception:
-                    return (
-                        "Hi — I'm ServerKit. I can help with processes, memory, disk, and logs on this machine.\n"
-                        "For best `ask` support, install from your checkout: "
-                        '`pip install -e ".[all]"` then restart `serverkit`.\n'
-                        f"(Underlying issue: {exc})"
-                    )
-            return _ask_controlled_log_unreadable(exc)
 
     if text == "catalog":
         names = WorkflowManager().list_catalog()
-        return "\n".join(names) if names else "(no catalog templates)"
+        body = "\n".join(names) if names else "(no catalog templates)"
+        if style and style.enabled and names:
+            header = f"{style.accent('Catalog templates')}\n"
+            return header + body
+        return body
 
     if text.startswith("import ") and not text.startswith("import_workflow"):
         name = text[len("import ") :].strip()
         if not name:
             return "Usage: import CATALOG_NAME"
         state.server.import_workflow(name)
-        return f"Imported catalog workflow {name!r} to ~/.serverkit/workflows/"
+        return _ok(f"Imported catalog workflow {name!r} to ~/.serverkit/workflows/", style)
 
     if text.startswith("run "):
         rest = shlex.split(text[len("run ") :])
@@ -516,7 +540,10 @@ def parse_input(text: str, state: "ReplState") -> str | None:
                 allow_agent=allow_agent,
                 look_for_keys=look_for_keys,
             )
-            return f"Connected to {host!r} as {state.remote.user!r} (remote is active)."
+            message = f"Connected to {host!r} as {state.remote.user!r} (remote is active)."
+            if style and style.enabled:
+                return style.format_success(message)
+            return message
         except OptionalDependencyError as exc:
             return f"{exc}\nInstall with: pip install serverkit[remote]"
         except RemoteConnectionError as exc:
@@ -529,7 +556,10 @@ def parse_input(text: str, state: "ReplState") -> str | None:
             return "Not connected."
         host = getattr(state.remote, "host", "remote")
         state.close_remote()
-        return f"Disconnected from {host!r}. Using local server."
+        message = f"Disconnected from {host!r}. Using local server."
+        if style and style.enabled:
+            return style.format_success(message)
+        return message
 
     if text == "memory":
         snap = state.active.memory()
@@ -538,40 +568,6 @@ def parse_input(text: str, state: "ReplState") -> str | None:
     if text == "memory.json":
         snap = state.active.memory()
         return json.dumps(snap.to_dict(), indent=2)
-
-    # --- PDF: processes ---
-    if text == "processes.all()":
-        procs = state.active.processes().all()
-        return format_processes(procs)
-
-    if text.startswith("processes.memory_above("):
-        n = extract_number(text)
-        procs = state.active.processes().memory_above(n).all()
-        return format_processes(procs)
-
-    if text.startswith("processes.cpu_above("):
-        n = extract_number(text)
-        procs = state.active.processes().cpu_above(n).all()
-        return format_processes(procs)
-
-    if text.startswith("processes.named("):
-        name = extract_string_arg(text, "processes.named")
-        if name is None:
-            return "Usage: processes.named(\"name\")"
-        procs = state.active.processes().named(name).all()
-        return format_processes(procs)
-
-    if text.startswith("processes.sort_by_memory()"):
-        col = state.active.processes().sort_by_memory()
-        if ".all()" in text:
-            return format_processes(col.all())
-        return col.summarize() + "\n\n" + col.display()
-
-    if text.startswith("processes.sort_by_cpu()"):
-        col = state.active.processes().sort_by_cpu()
-        if ".all()" in text:
-            return format_processes(col.all())
-        return col.summarize() + "\n\n" + col.display()
 
     # --- PDF: logs ---
     if "logs(" in text:
@@ -627,7 +623,12 @@ def _format_workflow_result(result: dict) -> str:
     return "\n".join(lines) if lines else repr(result)
 
 
-def format_user_error(exc: BaseException) -> str:
-    if isinstance(exc, ServerKitError):
-        return str(exc)
-    return f"Error: {exc}"
+def format_user_error(
+    exc: BaseException,
+    *,
+    style: "ShellStyle | None" = None,
+) -> str:
+    message = str(exc) if isinstance(exc, ServerKitError) else f"Error: {exc}"
+    if style is not None:
+        return style.format_error(message.removeprefix("Error: "))
+    return message if isinstance(exc, ServerKitError) else f"Error: {exc}"

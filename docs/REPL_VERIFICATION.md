@@ -17,7 +17,7 @@ Same effect: clear the REPL terminal (`clr` / `clear` are handled in the shell p
 
 ### Disk / ports / cron / env
 
-These use the same **`disk` / `ports` / `cron` / `env`** entry points as `help` (optional `()`, then fluent chains). On **Windows**, `cron` may be empty; **`disk` / `ports`** need psutil/OS support.
+These use the same `**disk` / `ports` / `cron` / `env**` entry points as `help` (optional `()`, then fluent chains). On **Windows**, `cron` may be empty; `**disk` / `ports`** need psutil/OS support.
 
 ```text
 disk
@@ -47,7 +47,7 @@ logs("C:\Windows\Logs\DISM\dism.log").contains("DISM").display()
 logs("C:\path\to\your.log").since("2024-01-01T00:00:00").display()
 logs("C:\path\to\your.log").until("2099-12-31T23:59:59").display()
 logs("C:\path\to\jsonl.log").json_lines()
-logs("C:\path\to\your.log").error_rate()
+logs("C:\path\to\your.log").error_rate()dco
 logs("C:\path\to\your.log").error_rate(10)
 ```
 
@@ -74,6 +74,16 @@ memory
 memory.json
 ```
 
+### Ask — saved workflows / catalog (no Ollama JSON; same as `workflow list` / `catalog`)
+
+```text
+ask list workflows
+ask workflow list
+ask show saved workflows
+ask list catalog
+ask catalog
+```
+
 ### Systemd (Linux only; on Windows expect `ExternalCommandNotFound` / clear message)
 
 ```text
@@ -85,7 +95,7 @@ systemctl.status("ssh.service")
 
 ## Remote (`pip install serverkit[remote]`)
 
-After **`connect`**, the same **disk / ports / cron / env** shapes run on the **SSH target** (remote `df`, `ss`, crontabs, `printenv`, etc.):
+After `**connect**`, the same **disk / ports / cron / env** shapes run on the **SSH target** (remote `df`, `ss`, crontabs, `printenv`, etc.):
 
 ```text
 connect USER@HOST --key C:\Users\YOU\.ssh\id_ed25519 --timeout 45
@@ -104,6 +114,8 @@ docker.logs("CONTAINER_NAME", 100)
 processes().memory_above(100).summarize()
 memory
 ask list processes with cpu above 5 percent
+ask list workflows
+ask list catalog
 disconnect
 ```
 

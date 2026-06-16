@@ -4,12 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "serverkit"
-version = "0.3.0"
-description = "OOP Linux operations SDK with workflows"
+version = "0.3.4"
+description = "Fluent Python SDK and shell for Linux server operations"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "ServerKit Team" }]
+keywords = ["linux", "server", "operations", "sdk", "workflows", "ssh", "systemd"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
     "psutil>=5.9.0",
     "prompt_toolkit>=3.0.0",
@@ -38,7 +52,13 @@ all = [
 ]
 
 [project.scripts]
-serverkit = "serverkit.shell.repl:main"
+serverkit = "serverkit.shell.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/aahil-khan/opscript"
+Repository = "https://github.com/aahil-khan/opscript"
+Documentation = "https://github.com/aahil-khan/opscript/blob/main/docs/USER_GUIDE.md"
+"Bug Tracker" = "https://github.com/aahil-khan/opscript/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -46,6 +66,7 @@ include = ["serverkit*"]
 
 [tool.setuptools.package-data]
 "serverkit.workflows.catalog" = ["*.json"]
+"serverkit" = ["config.template.jsonc"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

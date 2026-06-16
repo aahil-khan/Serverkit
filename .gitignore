@@ -50,3 +50,5 @@ app.log
 .DS_Store
 Thumbs.db
 docs/AI_TESTING.md
+
+serverkit-*/

@@ -32,6 +32,7 @@ _SDK_COMPLETIONS: dict[str, list[str]] = {
         "clr",
         "clear",
         "help",
+        "menu",
         "exit",
     ],
     "processes": [
