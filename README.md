@@ -1,5 +1,7 @@
 # ServerKit
 
+<img src="demo/demo.gif" alt="ServerKit Demo" width="100%"/>
+
 **A Python design exercise: Linux server resources as fluent, chainable objects.**
 
 ServerKit wraps host inspection (processes, memory, logs, disk, services, …) behind a `Server` facade, collection filters, and persisted workflows. It ships as a library and a small REPL — not as a production orchestration tool.
@@ -41,18 +43,14 @@ This repository is a **portfolio piece** demonstrating API shape, abstraction bo
 
 ## Live Demo
 
-~75s walkthrough: REPL → memory → process filters → save workflow → run locally → run on a remote host via SSH.
 
-<!-- Replace XXXXXX after recording — see docs/demo/DEMO.md -->
-[![asciicast](https://asciinema.org/a/XXXXXX.svg)](https://asciinema.org/a/XXXXXX)
+[![asciicast](https://asciinema.org/a/pjiourqm4m6oqWAd.svg)](https://asciinema.org/a/pjiourqm4m6oqWAd)
 
 You'll see:
 
 1. Host memory and process collections queried through the REPL
 2. A workflow composed in one line and saved to `~/.serverkit/workflows/`
 3. The same workflow executed on a remote host without changing the JSON
-
-Recording steps: [docs/demo/DEMO.md](docs/demo/DEMO.md)
 
 ---
 
