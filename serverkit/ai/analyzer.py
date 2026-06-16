@@ -26,6 +26,8 @@ def _extract_largest_files_path_and_limit(query: str) -> tuple[str, int] | None:
         r"largest\s+files\s+(?:in|under|at)\s+\"([^\"]+)\"",
         r"largest\s+files\s+(?:in|under|at)\s+'([^']+)'",
         r"largest\s+files\s+(?:in|under|at)\s+(/\S+)",
+        # Unquoted Windows path: C:\dir\leaf — \S+ stops at the space before "limit N"
+        r"largest\s+files\s+(?:in|under|at)\s+([A-Za-z]:\S+)",
     ):
         m = re.search(pattern, query, re.IGNORECASE)
         if m:
@@ -36,6 +38,47 @@ def _extract_largest_files_path_and_limit(query: str) -> tuple[str, int] | None:
             lim = int(lm.group(1)) if lm else 20
             return path, max(1, min(lim, 500))
     return None
+
+
+_MEMORY_OFF_TOPIC = re.compile(
+    r"\b(weather|forecast|humidity|snow|rain|tornado|hurricane|celsius|fahrenheit)\b",
+    re.I,
+)
+_MEMORY_PROCESS_LIST = re.compile(
+    r"\b(list|show)\s+process(?:ed|es|ing)?\b|\b(process|apps)\s+list\b",
+    re.I,
+)
+
+
+def _looks_memory_usage_query(query: str) -> bool:
+    """True only for clear RAM/swap snapshot questions (deterministic path)."""
+    low = query.strip().lower()
+    if not low or len(low) > 200:
+        return False
+    if _MEMORY_OFF_TOPIC.search(low) or _MEMORY_PROCESS_LIST.search(low):
+        return False
+    if low in ("ram", "memory", "mem"):
+        return True
+    return bool(
+        re.search(r"\b(show|display|current|system)\s+(memory|ram)\b", low)
+        or re.search(r"\bwhat\s+is\s+(the\s+)?(memory|ram)\b", low)
+        or re.search(r"\b(memory|ram)\s+(usage|status|summary|use|info|stats)\b", low)
+        or re.search(r"\bhow\s+much\s+(ram|memory)\b", low)
+    )
+
+
+def _memory_model_intent_plausible(user_query: str) -> bool:
+    """Block small-model JSON that picks resource=memory for unrelated text."""
+    low = user_query.strip().lower()
+    if not low:
+        return False
+    if _MEMORY_OFF_TOPIC.search(low) or _MEMORY_PROCESS_LIST.search(low):
+        return False
+    if _looks_memory_usage_query(low):
+        return True
+    if len(low) <= 20 and low.isalpha() and not re.search(r"\b(ram|memory|swap)\b", low):
+        return False
+    return bool(re.search(r"\b(ram|memory|swap)\b", low))
 
 
 _OPS_HINT = re.compile(
@@ -373,9 +416,7 @@ JSON:"""
                 {"resource": "users", "filters": [{"action": "logged_in"}]},
                 user_query=query,
             )
-        if re.search(r"\b(show|what|current|system)\s+(memory|ram)\b", q) or re.search(
-            r"\b(memory|ram)\s+(usage|status|summary)\b", q
-        ) or re.search(r"\bhow\s+much\s+(ram|memory)\b", q):
+        if _looks_memory_usage_query(q):
             return self._run_action({"resource": "memory", "filters": []}, user_query=query)
         if re.search(r"\blisten(?:ing)?\s+ports?\b", q) or re.search(
             r"\bports?\s+(?:that\s+are\s+)?listen(?:ing)?\b", q
@@ -482,6 +523,19 @@ JSON:"""
         if resource == "disk":
             return self._run_disk_action(action)
         if resource == "memory":
+            if not _memory_model_intent_plausible(user_query):
+                low = user_query.strip().lower()
+                if _MEMORY_OFF_TOPIC.search(low):
+                    return (
+                        "That looks like a general or weather question, not a RAM/swap check on this host. "
+                        "For memory use `ask show memory` or `ask what is the ram`; for processes use `ask list processes`."
+                    )
+                if _looks_ask_soft_query(user_query):
+                    return self._conversational_reply(user_query)
+                return (
+                    "That line was interpreted as RAM/swap, but it does not look like a memory question "
+                    "(small models often mispick). Try `ask show memory` or `ask list processes`."
+                )
             return self._run_memory_action()
         if resource == "ports":
             return self._run_ports_action(action)
@@ -613,7 +667,13 @@ JSON:"""
                 except (TypeError, ValueError):
                     lim = 20
                 lim = max(1, min(lim, 500))
-                return coll.largest_files(path, limit=lim).summarize()
+                out = coll.largest_files(path, limit=lim).summarize().strip()
+                if not out:
+                    return (
+                        f"No files returned for largest-file scan under {path!r} "
+                        "(empty directory, permissions, or scan skipped files)."
+                    )
+                return out
             coll = self._apply_disk_filter(coll, f)
         return coll.summarize()
 

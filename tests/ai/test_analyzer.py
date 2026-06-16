@@ -26,6 +26,52 @@ def test_parse_model_json_prefix_chatter():
     assert out == {"resource": "processes", "filters": []}
 
 
+def test_extract_largest_files_windows_unquoted_path():
+    from serverkit.ai.analyzer import _extract_largest_files_path_and_limit
+
+    got = _extract_largest_files_path_and_limit("largest files in C:\\Windows\\Temp limit 8")
+    assert got is not None
+    path, lim = got
+    assert path.upper().startswith("C:")
+    assert "Temp" in path
+    assert lim == 8
+
+
+def test_ask_weather_does_not_return_ram_summary():
+    srv = _server_mock()
+    stub = _StubOllama('{"resource": "memory", "filters": []}')
+    a = Analyzer(srv, ollama=stub)
+    out = a.ask("what is the weather")
+    assert "RAM:" not in out
+    assert "weather question" in out.lower() or "mispick" in out.lower()
+
+
+def test_ask_show_ram_still_returns_memory():
+    snap = MagicMock()
+    snap.summarize.return_value = "RAM: ok"
+    srv = _server_mock()
+    srv.memory = MagicMock(return_value=snap)
+    a = Analyzer(srv, ollama=_StubOllama("SHOULD_NOT"))
+    out = a.ask("show ram")
+    assert "RAM: ok" in out
+
+
+def test_largest_files_empty_scan_message():
+    srv = MagicMock()
+    srv._config = Config()
+    fe = MagicMock()
+    fe.summarize.return_value = ""
+    dc = MagicMock()
+    dc.largest_files.return_value = fe
+    srv.disk.return_value = dc
+    a = Analyzer(srv, ollama=MagicMock())
+    out = a._run_action(
+        {"resource": "disk", "filters": [{"action": "largest_files", "value": "/tmp", "limit": 3}]},
+        user_query="largest files in /tmp",
+    )
+    assert "No files returned" in out
+
+
 class _StubOllama:
     def __init__(self, response: str) -> None:
         self._response = response
@@ -216,7 +262,13 @@ def test_run_action_memory_ports_users_json():
     srv.users.return_value = mgr
     stub = MagicMock()
     a = Analyzer(srv, ollama=stub)
-    assert a._run_action({"resource": "memory", "filters": []}) == "mem ok"
+    assert (
+        a._run_action(
+            {"resource": "memory", "filters": []},
+            user_query="show memory",
+        )
+        == "mem ok"
+    )
     assert (
         a._run_action({"resource": "ports", "filters": [{"action": "listening"}]}, user_query="x")
         == "ports ok"
