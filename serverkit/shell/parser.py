@@ -23,6 +23,44 @@ if TYPE_CHECKING:
     from serverkit.shell.state import ReplState
     from serverkit.shell.style import ShellStyle
 
+
+def _strip_leading_gt_prompts(line: str) -> str:
+    """Remove repeated ``> `` / ``>`` prefixes from pasted transcript lines."""
+    s = line.strip()
+    while s.startswith("> "):
+        s = s[2:].lstrip()
+    if s.startswith(">"):
+        s = s[1:].lstrip()
+    return s
+
+
+def _handle_ask_log_file_not_found(query: str, exc: LogFileNotFound, state: "ReplState") -> str:
+    """When ``ask`` fails because a log path is missing, avoid leaking raw errors for soft queries."""
+    from serverkit.ai.analyzer import (
+        Analyzer,
+        _local_time_date_reply,
+        _looks_conversational_only,
+        _looks_time_or_date_query,
+    )
+
+    if _looks_time_or_date_query(query):
+        return _local_time_date_reply()
+    if _looks_conversational_only(query):
+        az = Analyzer(state.active)
+        try:
+            return az._conversational_reply(query)
+        except RuntimeError:
+            return (
+                "Hi — I'm ServerKit. I couldn't read that log path right now "
+                f"({exc}). Type `help` for commands you can run here."
+            )
+    return (
+        "That path is not available from here, and that kind of request "
+        "is not included in my functionalities on this host. "
+        "Type `help` for supported log and diagnostics commands."
+    )
+
+
 HELP_TEXT = """\
 --------------------------------------------------------------------------------
   ServerKit shell — command reference
@@ -423,7 +461,7 @@ def parse_input(
     style: "ShellStyle | None" = None,
 ) -> str | None:
     """Translate one line of shell input into a string to print, or None."""
-    text = text.strip()
+    text = _strip_leading_gt_prompts(text)
     if not text:
         return None
 
@@ -445,6 +483,8 @@ def parse_input(
             return Analyzer(state.active).ask(query)
         except OptionalDependencyError as exc:
             return f"{exc}\nInstall with: pip install serverkit[ai]"
+        except LogFileNotFound as exc:
+            return _handle_ask_log_file_not_found(query, exc, state)
         except RuntimeError as exc:
             return str(exc)
 

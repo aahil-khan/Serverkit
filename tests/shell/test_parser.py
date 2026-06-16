@@ -166,6 +166,87 @@ def test_parse_ask_invokes_analyzer(monkeypatch):
     assert out == "stub:list hungry processes"
 
 
+def test_parse_ask_strips_leading_gt_prompts(monkeypatch):
+    from serverkit import Server
+    from serverkit.shell.state import ReplState
+
+    monkeypatch.setattr(
+        "serverkit.ai.analyzer.Analyzer.ask",
+        lambda self, q: f"stub:{q}",
+    )
+    state = ReplState(Server())
+    out = parse_input("> > ask hello there", state)
+    assert out == "stub:hello there"
+
+
+def test_parse_ask_log_not_found_greeting_uses_conversational_reply(monkeypatch):
+    from serverkit.exceptions import LogFileNotFound
+    from serverkit import Server
+    from serverkit.shell.state import ReplState
+
+    def fake_ask(self, q):
+        raise LogFileNotFound("/var/log/auth.log")
+
+    monkeypatch.setattr("serverkit.ai.analyzer.Analyzer.ask", fake_ask)
+    monkeypatch.setattr(
+        "serverkit.ai.analyzer.Analyzer._conversational_reply",
+        lambda self, q: f"greet:{q}",
+    )
+    state = ReplState(Server())
+    out = parse_input("ask how are you", state)
+    assert out == "greet:how are you"
+
+
+def test_parse_ask_log_not_found_time_returns_local_clock(monkeypatch):
+    from serverkit.exceptions import LogFileNotFound
+    from serverkit import Server
+    from serverkit.shell.state import ReplState
+
+    def fake_ask(self, q):
+        raise LogFileNotFound("/var/log")
+
+    monkeypatch.setattr("serverkit.ai.analyzer.Analyzer.ask", fake_ask)
+    state = ReplState(Server())
+    out = parse_input("ask what is the time", state)
+    assert "local time" in (out or "").lower()
+    assert "Log not found" not in (out or "")
+
+
+def test_parse_ask_log_not_found_non_soft_shows_controlled_message(monkeypatch):
+    from serverkit.exceptions import LogFileNotFound
+    from serverkit import Server
+    from serverkit.shell.state import ReplState
+
+    def fake_ask(self, q):
+        raise LogFileNotFound("/var/log/syslog")
+
+    monkeypatch.setattr("serverkit.ai.analyzer.Analyzer.ask", fake_ask)
+    state = ReplState(Server())
+    out = parse_input("ask summarize last 500 lines of /var/log/syslog", state)
+    assert "Log not found" not in (out or "")
+    assert "not included in my functionalities" in (out or "").lower()
+    assert "help" in (out or "").lower()
+
+
+def test_parse_ask_log_not_found_greeting_fallback_when_reply_fails(monkeypatch):
+    from serverkit.exceptions import LogFileNotFound
+    from serverkit import Server
+    from serverkit.shell.state import ReplState
+
+    def fake_ask(self, q):
+        raise LogFileNotFound("/var/log/auth.log")
+
+    def boom(self, q):
+        raise RuntimeError("ollama down")
+
+    monkeypatch.setattr("serverkit.ai.analyzer.Analyzer.ask", fake_ask)
+    monkeypatch.setattr("serverkit.ai.analyzer.Analyzer._conversational_reply", boom)
+    state = ReplState(Server())
+    out = parse_input("ask how are you", state)
+    assert "Hi — I'm ServerKit" in (out or "")
+    assert "auth.log" in (out or "").lower()
+
+
 def test_parse_disk_summarize_mock():
     col = MagicMock()
     col.summarize.return_value = "S"
