@@ -128,6 +128,15 @@ def _show_cursor() -> None:
     sys.stdout.flush()
 
 
+def _clear_lines_above(count: int) -> None:
+    """Erase ``count`` completed lines above the cursor (newest line last)."""
+    if count <= 0:
+        return
+    for _ in range(count):
+        sys.stdout.write("\033[1A\033[2K")
+    sys.stdout.flush()
+
+
 def _write_line(text: str) -> None:
     sys.stdout.write(f"\r\033[2K{text}{_RESET}\n")
     sys.stdout.flush()
@@ -479,13 +488,17 @@ def _print_animated(
     skip = SkipWatcher() if skip_on_key else None
     if skip:
         skip.start()
-        if enabled:
+    try:
+        prelude_lines = 0
+        if skip and enabled:
             sys.stdout.write(ShellStyle(accent=accent, enabled=True).skip_hint())
             sys.stdout.flush()
-    try:
+            prelude_lines += 1
         if _animate_boot_prelude(accent=accent, skip=skip):
             _finish_on_skip(accent=accent, enabled=enabled)
             return True
+        prelude_lines += len(_BOOT_STEPS)
+        _clear_lines_above(prelude_lines)
         if _animate_logo(accent=accent, skip=skip):
             _finish_on_skip(accent=accent, enabled=enabled)
             return True
